@@ -1,6 +1,7 @@
 import { defineConfig } from 'wxt';
 
 export default defineConfig({
+  outDirTemplate: '',
   modules: ['@wxt-dev/module-react'],
   manifest: {
     name: 'TranslateChina — Trung → Việt',

@@ -8,7 +8,7 @@ let app: Page;
 let extensionId: string;
 let fixtureExtension: string;
 test.beforeAll(async () => {
-  const extension = path.resolve('.output/chrome-mv3');
+  const extension = fs.existsSync(path.resolve('.output/manifest.json')) ? path.resolve('.output') : path.resolve('.output/chrome-mv3');
   // Grant a synthetic site in a temporary test-only manifest. Native Chrome permission
   // prompts are not automatable headlessly; all runtime code is the production build.
   fixtureExtension = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-extension-test-'));
