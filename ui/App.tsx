@@ -3,13 +3,21 @@ import { request } from '../lib/messages';
 import { TranslationEngine } from '../lib/translator';
 import { splitText } from '../lib/text-chunks';
 import { DEFAULT_SETTINGS, getSettings } from '../lib/storage';
-import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type Direction, type EngineStatus, type OcrResult, type OcrState, type PageStatus, type Rate, type Settings } from '../lib/types';
+import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type Direction, type EngineStatus, type OcrResult, type OcrState, type PageStatus, type PanelSize, type Rate, type Settings } from '../lib/types';
 
 type Tab = 'page' | 'image' | 'write' | 'settings';
 const availabilityLabels: Record<string, string> = { available: 'Sẵn sàng', downloadable: 'Cần tải gói ngôn ngữ', downloading: 'Đang tải…', unavailable: 'Chưa khả dụng', unsupported: 'Trình duyệt chưa hỗ trợ' };
 
-function Brand({ online }: { online: boolean }) {
-  return <header className="brand"><span className="brand-mark" aria-hidden="true">中<span>vi</span></span><div><strong>TranslateChina</strong><span className="brand-caption">GLOBAL IS THE ONLY ONE</span></div><span className="local-tag"><i /> {online ? 'Có dịch trực tuyến' : 'Trên máy'}</span></header>;
+function Brand({ online, size, onToggleSize }: { online: boolean; size?: PanelSize; onToggleSize?: () => void }) {
+  const sizeLabel = size === 'mini' ? '275px' : size === 'compact' ? '320px' : '380px';
+  return <header className="brand">
+    <span className="brand-mark" aria-hidden="true">中<span>vi</span></span>
+    <div><strong>TranslateChina</strong><span className="brand-caption">GLOBAL IS THE ONLY ONE</span></div>
+    <div className="brand-actions">
+      {onToggleSize && <button type="button" className="size-toggle-btn" title={`Đổi kích thước bảng (Hiện tại: ${sizeLabel}). Bấm để chuyển giữa 380px ↔ 320px ↔ 275px.`} onClick={onToggleSize}>↔ {sizeLabel}</button>}
+      <span className="local-tag"><i /> {online ? 'Có dịch trực tuyến' : 'Trên máy'}</span>
+    </div>
+  </header>;
 }
 
 export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; initialTab?: Tab }) {
@@ -237,6 +245,12 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     try { await navigator.clipboard.writeText(text); setNotice('Đã sao chép.'); } catch { setError('Chưa sao chép được. Hãy chọn văn bản và dùng Ctrl/Cmd+C.'); }
   }
 
+  function toggleSize() {
+    const current = settings.panelSize || 'standard';
+    const next: PanelSize = current === 'standard' ? 'compact' : current === 'compact' ? 'mini' : 'standard';
+    void updateSettings({ panelSize: next });
+  }
+
   const rateCard = <section className="rate-card" aria-label="Tỷ giá CNY sang VNĐ">
     <div className="row"><span className="eyebrow">QUY ĐỔI THAM KHẢO</span><button className="icon-button" aria-label="Cập nhật tỷ giá" disabled={refreshing || !!settings.manualRate} onClick={refreshRate}>{refreshing ? '…' : '↻'}</button></div>
     <div className="exchange"><span>1 <small>CNY</small></span><span className="exchange-arrow">→</span><strong>{rate ? Number(rate.rate).toLocaleString('vi-VN', { maximumFractionDigits: 6 }) : '—'} <small>VNĐ</small></strong></div>
@@ -245,8 +259,10 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     {rate?.stale && <p className="warning inline">{rate.error || 'Nguồn đang cung cấp tỷ giá cũ. Hãy kiểm tra ngày dữ liệu.'}</p>}
   </section>;
 
-  return <div className={`app ${popup ? 'popup' : ''}`}>
-    <Brand online={settings.onlineFallback} />
+  const panelSize = settings.panelSize || 'standard';
+
+  return <div className={`app ${popup ? 'popup' : ''} size-${panelSize}`}>
+    <Brand online={settings.onlineFallback} size={panelSize} onToggleSize={toggleSize} />
     <main>
       <div className="intro"><span className="eyebrow">TRUNG → VIỆT · GLOBAL IS THE ONLY ONE</span><h1>Global is<br /><em>the only one.</em></h1><p>Đọc web tiếng Trung. Global is the only one.</p><span className="intro-glyph" aria-hidden="true">译</span></div>
       {!popup && <nav aria-label="Công cụ">{([['page', 'Trang web'], ['image', 'Dịch ảnh'], ['write', 'Tìm & nhắn'], ['settings', 'Thiết lập']] as [Tab, string][]).map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => { setTab(id); setError(''); setNotice(''); }}>{label}</button>)}</nav>}
@@ -425,6 +441,18 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
         <div className="section-heading"><h2>Bắt đầu miễn phí</h2><span className="pill">Không API key</span></div><p className="muted">Tải gói ngôn ngữ một lần bằng Chrome. Sau đó việc dịch diễn ra ngay trên thiết bị.</p>
         {(['zh-vi', 'vi-zh'] as Direction[]).map(direction => <section className="model-card" key={direction}><div className="row"><div><h3>{direction === 'zh-vi' ? 'Trung → Việt' : 'Việt → Trung'}</h3><p className="muted small">{availabilityLabels[statuses.find(s => s.direction === direction)?.state || ''] || 'Đang kiểm tra…'}</p></div><button className="secondary compact" disabled={!!initializing} onClick={() => initialize(direction)}>{initializing === direction ? 'Đang tải…' : 'Khởi tạo'}</button></div>{initializing === direction && <progress max="1" value={download} />}</section>)}
         <p className="note">Nếu Chrome cần giao diện đang mở để dịch, hãy giữ bảng công cụ này mở. Khi gặp lỗi, thử khởi tạo lại rồi quay về trang web.</p>
+        <section>
+          <h2>Kích thước bảng công cụ</h2>
+          <p className="muted">Tùy chỉnh độ rộng mặc định khi mở popup hoặc sidepanel.</p>
+          <label className="field">
+            Độ rộng bảng
+            <select value={settings.panelSize || 'standard'} onChange={e => void updateSettings({ panelSize: e.target.value as PanelSize })}>
+              <option value="standard">Tiêu chuẩn · 380px (Đầy đủ và dễ nhìn nhất)</option>
+              <option value="compact">Gọn vừa · 320px</option>
+              <option value="mini">Nhỏ gọn · 275px</option>
+            </select>
+          </label>
+        </section>
         <section><h2>Tự dịch theo website</h2><p className="muted">Với website khác, mở trang và bấm Cho phép dịch website này. Bạn chỉ cấp quyền cho địa chỉ đó.</p>{Object.keys(settings.enabled).map(name => <label className="setting-row" key={name}><span>{name === 'taobao' ? 'Taobao' : name === '1688' ? '1688' : name.replace(/^https?:\/\//, '')}</span><input type="checkbox" checked={!!settings.enabled[name]} onChange={e => void updateSettings({ enabled: { ...settings.enabled, [name]: e.target.checked } })} /></label>)}</section>
         {rateCard}
         <section><h2>Tỷ giá riêng</h2><p className="muted">Nhập số VNĐ cho 1 CNY nếu bạn có tỷ giá riêng. Bỏ trống để dùng nguồn tự động.</p><label className="field">1 CNY =<div className="input-unit"><input inputMode="decimal" placeholder="Ví dụ 3870.34" value={manualRate} onChange={e => setManualRate(e.target.value)} /><span>VNĐ</span></div></label><div className="two-buttons"><button className="secondary" onClick={() => void updateSettings({ manualRate })}>Lưu tỷ giá</button><button className="text-button" onClick={() => { setManualRate(''); void updateSettings({ manualRate: '' }); }}>Dùng tự động</button></div></section>

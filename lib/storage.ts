@@ -1,5 +1,5 @@
 import type { Settings } from './types';
-export const DEFAULT_SETTINGS: Settings = { enabled: { taobao: true, '1688': true }, manualRate: '', onlineFallback: true, ocrLanguage: 'chi_sim' };
+export const DEFAULT_SETTINGS: Settings = { enabled: { taobao: true, '1688': true }, manualRate: '', onlineFallback: true, ocrLanguage: 'chi_sim', panelSize: 'standard' };
 
 /** Chrome exposes storage in extension pages, but keeping this guard makes a
  * stale/partially reloaded page fail gracefully instead of showing the raw
