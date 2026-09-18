@@ -35,12 +35,17 @@ export class OcrEngine {
     const croppedImage = canvas.toDataURL('image/png');
     const task = {
       id: jobId, cancelled: false,
-      worker: createWorker(['chi_sim', 'chi_tra', 'eng'], 1, {
+      worker: createWorker('chi_sim+eng', 1, {
         workerPath: chrome.runtime.getURL('vendor/tesseract/worker.min.js'),
         corePath: chrome.runtime.getURL('vendor/tesseract-core'),
         langPath: chrome.runtime.getURL('vendor/tessdata'),
         workerBlobURL: false,
-        logger: message => progress(message.progress, message.status),
+        cacheMethod: 'none' as any,
+        gzip: true,
+        logger: message => {
+          const p = typeof message.progress === 'number' && !isNaN(message.progress) ? message.progress : 0;
+          progress(p, message.status || '');
+        },
       }),
     };
     this.active = task;
@@ -53,11 +58,11 @@ export class OcrEngine {
         const enlarged = document.createElement('canvas');
         enlarged.width = Math.round(canvas.width * scale); enlarged.height = Math.round(canvas.height * scale);
         enlarged.getContext('2d')!.drawImage(canvas, 0, 0, enlarged.width, enlarged.height);
-        const { data } = await worker.recognize(enlarged);
+        const { data } = await worker.recognize(enlarged.toDataURL('image/png'));
         if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
         return { image: croppedImage, text: data.text.trim(), confidence: data.confidence };
       }
-      const { data } = await worker.recognize(canvas);
+      const { data } = await worker.recognize(croppedImage);
       if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
       return { image: croppedImage, text: data.text.trim(), confidence: data.confidence };
     } finally {

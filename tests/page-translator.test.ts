@@ -134,4 +134,37 @@ describe('PageTranslator lifecycle and stale invalidation', () => {
 
     translator.stop();
   });
+
+  it('translates input placeholder and restores on stop()', async () => {
+    root.innerHTML = `
+      <input id="login-id" placeholder="账号名/邮箱/手机号" />
+      <input id="login-pwd" placeholder="请输入登录密码" />
+      <span id="badge" title="正品保证">商品图标</span>
+    `;
+
+    const mockTranslate = vi.fn().mockImplementation(async (text: string) => {
+      if (text === '账号名/邮箱/手机号') return 'Tên tài khoản / Email / Số điện thoại';
+      if (text === '请输入登录密码') return 'Vui lòng nhập mật khẩu đăng nhập';
+      if (text === '正品保证') return 'Đảm bảo chính hãng';
+      return `Dịch: ${text}`;
+    });
+
+    const translator = new PageTranslator(root, mockTranslate, () => {}, () => true);
+    translator.start();
+    await translator.scan();
+
+    const idInput = root.querySelector('#login-id') as HTMLInputElement;
+    const pwdInput = root.querySelector('#login-pwd') as HTMLInputElement;
+    const badge = root.querySelector('#badge') as HTMLSpanElement;
+
+    expect(idInput.getAttribute('placeholder')).toBe('Tên tài khoản / Email / Số điện thoại');
+    expect(pwdInput.getAttribute('placeholder')).toBe('Vui lòng nhập mật khẩu đăng nhập');
+    expect(badge.getAttribute('title')).toBe('Đảm bảo chính hãng');
+
+    translator.stop();
+    expect(idInput.getAttribute('placeholder')).toBe('账号名/邮箱/手机号');
+    expect(pwdInput.getAttribute('placeholder')).toBe('请输入登录密码');
+    expect(badge.getAttribute('title')).toBe('正品保证');
+  });
 });
+

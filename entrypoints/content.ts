@@ -126,9 +126,16 @@ export default defineContentScript({
           overlay.style.pointerEvents = 'none';
           const target = document.elementFromPoint(event.clientX, event.clientY);
           overlay.style.pointerEvents = 'auto';
-          const image = target instanceof HTMLImageElement ? target : target?.closest('picture')?.querySelector('img');
-          if (!image) { hint.textContent = 'Chưa chọn được ảnh. Hãy bấm ảnh hoặc dùng Khoanh vùng.'; return; }
-          const box = image.getBoundingClientRect();
+          let visual = target instanceof HTMLImageElement ? target
+            : target?.querySelector('img, canvas, svg')
+            || target?.closest('picture')?.querySelector('img')
+            || target?.closest('img, canvas, svg, [style*="background"], a, div');
+          if (!visual) visual = target as HTMLElement | null;
+          const box = visual?.getBoundingClientRect();
+          if (!box || box.width < 10 || box.height < 10) {
+            hint.textContent = 'Chưa chọn được ảnh. Hãy bấm vào ảnh hoặc kéo khoanh vùng.';
+            return;
+          }
           const x = Math.max(0, box.left), y = Math.max(0, box.top);
           void finish({ x, y, width: Math.min(innerWidth, box.right) - x, height: Math.min(innerHeight, box.bottom) - y });
           return;

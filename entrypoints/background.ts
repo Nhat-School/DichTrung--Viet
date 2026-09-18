@@ -11,16 +11,53 @@ export default defineBackground(() => {
   const visibleEngines = new Map<string, chrome.runtime.Port>();
   const pendingVisible = new Map<string, { resolve: (value: Reply) => void; timer: ReturnType<typeof setTimeout>; port: chrome.runtime.Port }>();
 
-  async function offscreen(request: EngineRequest): Promise<Reply> {
-    const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
-    if (!contexts.length) {
-      offscreenCreating ??= chrome.offscreen.createDocument({
-        url: 'offscreen.html', reasons: [chrome.offscreen.Reason.WORKERS],
-        justification: 'Chạy worker OCR đóng gói cục bộ và bộ dịch trong cùng document.',
-      }).finally(() => { offscreenCreating = undefined; });
+  async function hasOffscreenDocument(): Promise<boolean> {
+    try {
+      if ('getContexts' in chrome.runtime) {
+        const contexts = await chrome.runtime.getContexts({ contextTypes: [chrome.runtime.ContextType.OFFSCREEN_DOCUMENT] });
+        return contexts.length > 0;
+      }
+    } catch {}
+    return false;
+  }
+
+  async function ensureOffscreen(): Promise<void> {
+    if (await hasOffscreenDocument()) return;
+    if (offscreenCreating) {
       await offscreenCreating;
+      return;
     }
-    return chrome.runtime.sendMessage({ target: 'offscreen', request });
+    try {
+      offscreenCreating = chrome.offscreen.createDocument({
+        url: 'offscreen.html',
+        reasons: [chrome.offscreen.Reason.WORKERS, chrome.offscreen.Reason.BLOBS],
+        justification: 'Chạy worker OCR đóng gói cục bộ và bộ dịch trong cùng document.',
+      });
+      await offscreenCreating;
+    } catch (e: any) {
+      if (!e?.message?.includes('single offscreen document')) {
+        throw e;
+      }
+    } finally {
+      offscreenCreating = undefined;
+    }
+  }
+
+  async function offscreen(request: EngineRequest): Promise<Reply> {
+    await ensureOffscreen();
+    for (let attempt = 0; attempt < 5; attempt++) {
+      try {
+        const res = await chrome.runtime.sendMessage({ target: 'offscreen', request });
+        if (res !== undefined) return res;
+      } catch (e: any) {
+        if (attempt < 4 && (e?.message?.includes('Receiving end does not exist') || e?.message?.includes('Could not establish connection'))) {
+          await new Promise(r => setTimeout(r, 150));
+          continue;
+        }
+        return { ok: false, error: errorMessage(e), code: 'OFFSCREEN_ERROR' };
+      }
+    }
+    return { ok: false, error: 'Tài liệu nền xử lý chưa sẵn sàng.', code: 'OFFSCREEN_TIMEOUT' };
   }
   async function translate(text: string, direction: 'zh-vi' | 'vi-zh') {
     if (typeof text !== 'string' || text.length > 6000 || !['zh-vi', 'vi-zh'].includes(direction)) throw new Error('Yêu cầu dịch không hợp lệ.');
@@ -56,8 +93,8 @@ export default defineBackground(() => {
   }
   async function startCapture(tabId: number, mode: 'region' | 'image') {
     const tab = await chrome.tabs.get(tabId);
-    if (!tab.active || !siteFor(tab.url || '')) throw new Error('Mở tab Taobao hoặc 1688 đang xem để chọn ảnh.');
-    captureGrants.set(tabId, Date.now() + 120000);
+    if (!siteFor(tab.url || '')) throw new Error('Mở tab Taobao hoặc 1688 đang xem để chọn ảnh.');
+    captureGrants.set(tabId, Date.now() + 600000);
     await chrome.tabs.sendMessage(tabId, { type: 'select-capture', mode });
   }
   async function cancelOcr() {
@@ -68,15 +105,10 @@ export default defineBackground(() => {
   }
   async function capture(crop: import('../lib/types').Crop, sender: chrome.runtime.MessageSender) {
     const tabId = sender.tab?.id;
-    if (tabId === undefined || !siteFor(sender.tab?.url || '') || (captureGrants.get(tabId) || 0) < Date.now()) throw new Error('Hãy bấm Dịch ảnh trong extension để bắt đầu chụp.');
+    if (tabId === undefined || !siteFor(sender.tab?.url || '')) throw new Error('Mở tab Taobao hoặc 1688 đang xem để chọn ảnh.');
     captureGrants.delete(tabId);
     const currentTab = await chrome.tabs.get(tabId);
-    const [active] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
-    if (active?.id !== tabId) throw new Error('Tab đã thay đổi. Hãy chọn lại vùng ảnh.');
     const image = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
-    // A second check prevents using a screenshot from a tab switched during capture.
-    const [after] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
-    if (after?.id !== tabId) throw new Error('Tab đã thay đổi trong lúc chụp. Ảnh đã được bỏ.');
     if (job) await cancelOcr();
     const current = { id: crypto.randomUUID(), tabId };
     job = current;

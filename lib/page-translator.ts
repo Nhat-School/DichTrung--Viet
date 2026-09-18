@@ -3,8 +3,10 @@ import { isExcluded } from './sites';
 import type { PageStatus } from './types';
 
 interface RecordState { original: string; rendered?: string; version: number; pending: boolean; failed?: string; }
+interface AttrRecordState { attr: string; original: string; rendered?: string; pending: boolean; failed?: string; }
 export class PageTranslator {
   private records = new Map<Text, RecordState>();
+  private attrRecords = new Map<Element, AttrRecordState>();
   private observer?: MutationObserver;
   private timer?: ReturnType<typeof setTimeout>;
   private generation = 0;
@@ -54,12 +56,18 @@ export class PageTranslator {
     for (const [node, record] of this.records) {
       if (node.isConnected && record.rendered !== undefined && node.data === record.rendered) node.data = record.original;
     }
-    this.records.clear(); this.translated = 0; this.error = undefined;
+    for (const [el, record] of this.attrRecords) {
+      if (el.isConnected && record.rendered !== undefined && el.getAttribute(record.attr) === record.rendered) {
+        el.setAttribute(record.attr, record.original);
+      }
+    }
+    this.records.clear(); this.attrRecords.clear(); this.translated = 0; this.error = undefined;
     this.onChange();
   }
   retry() {
     this.error = undefined;
     for (const record of this.records.values()) record.failed = undefined;
+    for (const record of this.attrRecords.values()) record.failed = undefined;
     this.schedule();
   }
   original(node: Text) {
@@ -85,7 +93,9 @@ export class PageTranslator {
     return text && text.length <= 500 ? text : undefined;
   }
   status(): PageStatus {
-    return { enabled: this.enabled, translated: this.translated, pending: [...this.records.values()].filter(r => r.pending).length, error: this.error };
+    const pendingText = [...this.records.values()].filter(r => r.pending).length;
+    const pendingAttr = [...this.attrRecords.values()].filter(r => r.pending).length;
+    return { enabled: this.enabled, translated: this.translated, pending: pendingText + pendingAttr, error: this.error };
   }
   schedule = () => {
     if (!this.enabled) return;
@@ -98,6 +108,7 @@ export class PageTranslator {
     const generation = this.generation;
     try {
       for (const node of this.records.keys()) if (!node.isConnected) this.records.delete(node);
+      for (const el of this.attrRecords.keys()) if (!el.isConnected) this.attrRecords.delete(el);
       const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT, {
         acceptNode: node => {
           const parent = node.parentElement;
@@ -131,6 +142,36 @@ export class PageTranslator {
           }
         } finally { record.pending = false; }
       }
+
+      // Translate Chinese placeholders on inputs/textareas and title attributes
+      const attrElements = this.root.querySelectorAll<HTMLElement>('input[placeholder], textarea[placeholder], [title]');
+      for (const el of attrElements) {
+        if (!this.enabled || this.generation !== generation) break;
+        if (!el.isConnected || el.closest('[data-tc-owned]')) continue;
+        const attr = el.hasAttribute('placeholder') ? 'placeholder' : 'title';
+        const val = el.getAttribute(attr) || '';
+        if (!val || !hasChinese(val) || val.length > 300) continue;
+        let record = this.attrRecords.get(el);
+        if (!record) {
+          record = { attr, original: val, pending: false };
+          this.attrRecords.set(el, record);
+        }
+        if (record.rendered || record.pending || record.failed === val) continue;
+        record.pending = true;
+        try {
+          const result = await this.translate(record.original);
+          if (this.enabled && this.generation === generation && el.isConnected) {
+            record.rendered = result;
+            el.setAttribute(attr, result);
+            this.translated++;
+          }
+        } catch {
+          record.failed = val;
+        } finally {
+          record.pending = false;
+        }
+      }
+
       if (batch.length === 40 && !this.error) this.schedule();
     } finally {
       this.running = false;
