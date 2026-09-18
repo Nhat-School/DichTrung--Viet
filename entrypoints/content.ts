@@ -2,18 +2,17 @@ import { defineContentScript } from 'wxt/utils/define-content-script';
 import { PageTranslator } from '../lib/page-translator';
 import { findPriceElements } from '../lib/price-elements';
 import { formatPrice, type Price } from '../lib/prices';
-import { isExcluded } from '../lib/sites';
 import { request } from '../lib/messages';
-import { siteFor, type Crop, type Rate, type Settings } from '../lib/types';
+import { isCommerceSite, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
 
 export default defineContentScript({
-  matches: ['https://*.taobao.com/*', 'https://*.1688.com/*'],
+  matches: ['*://*.taobao.com/*', '*://*.1688.com/*'],
   runAt: 'document_idle',
   main(ctx) {
     const site = siteFor(location.href);
-    if (!site || !document.body) return;
+    if (!site || !document.body || document.querySelector('[data-tc-root]')) return;
     const host = document.createElement('div');
-    host.dataset.tcOwned = ''; host.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;';
+    host.dataset.tcRoot = ''; host.dataset.tcOwned = ''; host.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;';
     const shadow = host.attachShadow({ mode: 'closed' });
     shadow.innerHTML = `<style>
       :host{all:initial}*{box-sizing:border-box}
@@ -105,7 +104,7 @@ export default defineContentScript({
     }
 
     function renderPrices() {
-      if (!settings?.enabled[site!] || !rate) {
+      if (!isCommerceSite(site) || !settings?.enabled[site!] || !rate) {
         restorePrices();
         return;
       }
@@ -135,7 +134,7 @@ export default defineContentScript({
         }
       }
 
-      const entries = findPriceElements(document.body, site!, el => translator.originalText(el));
+      const entries = findPriceElements(document.body, site, el => translator.originalText(el));
       for (const { element, prices } of entries.slice(0, 300)) {
         if (priceRecords.has(element) || element.closest('[data-tc-price]')) continue;
         const originalText = element.textContent || '';
@@ -229,30 +228,6 @@ export default defineContentScript({
     });
     ctx.addEventListener(document, 'pointerout', () => { tip?.remove(); tip = undefined; });
 
-    function getNodesInRect(root: Node, rect: { x: number; y: number; width: number; height: number }): Text[] {
-      const nodes: Text[] = [];
-      const range = document.createRange();
-      const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
-      let node: Node | null;
-      const rectRight = rect.x + rect.width;
-      const rectBottom = rect.y + rect.height;
-      while ((node = walker.nextNode())) {
-        const parent = node.parentElement;
-        if (!parent || isExcluded(parent)) continue;
-        const data = node.textContent?.trim();
-        if (!data) continue;
-        try {
-          range.selectNodeContents(node);
-          const r = range.getBoundingClientRect();
-          if (r.width === 0 || r.height === 0) continue;
-          if (r.left < rectRight && r.right > rect.x && r.top < rectBottom && r.bottom > rect.y) {
-            nodes.push(node as Text);
-          }
-        } catch {}
-      }
-      return nodes;
-    }
-
     function selectCapture(mode: 'region' | 'image') {
       captureCleanup?.(); tip?.remove();
       const overlay = document.createElement('div'); overlay.className = 'capture';
@@ -268,30 +243,15 @@ export default defineContentScript({
       const finish = async (rect: { x: number; y: number; width: number; height: number }) => {
         clean();
 
-        // Translate all text nodes in the dragged region immediately on page
-        const textNodes = getNodesInRect(document.body, rect);
-        if (textNodes.length > 0) {
-          void translator.translateNodes(textNodes).then(() => {
-            schedulePrices();
-          });
-        }
-
+        // Keep the selected pixels stable: do not translate/resize DOM while capturing.
         const crop: Crop = { ...rect, viewportWidth: innerWidth, viewportHeight: innerHeight };
         host.style.visibility = 'hidden';
         await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
         try {
           await request({ type: 'capture', crop });
-          if (textNodes.length > 0) {
-            toast(`Đã dịch ${textNodes.length} đoạn chữ trong vùng chọn.`);
-          } else {
-            toast('Đang nhận diện chữ trong ảnh. Xem tiến độ và kết quả trong bảng công cụ.');
-          }
+          toast('Đang nhận diện chữ trong ảnh. Xem tiến độ và kết quả trong bảng công cụ.');
         } catch (error) {
-          if (textNodes.length > 0) {
-            toast(`Đã dịch ${textNodes.length} đoạn chữ trong vùng chọn.`);
-          } else {
-            toast(error instanceof Error ? error.message : String(error));
-          }
+          toast(error instanceof Error ? error.message : String(error));
         } finally {
           host.style.visibility = '';
         }
@@ -302,14 +262,15 @@ export default defineContentScript({
           overlay.style.pointerEvents = 'none';
           const target = document.elementFromPoint(event.clientX, event.clientY);
           overlay.style.pointerEvents = 'auto';
-          let visual = target instanceof HTMLImageElement ? target
-            : target?.querySelector('img, canvas, svg')
-            || target?.closest('picture')?.querySelector('img')
-            || target?.closest('img, canvas, svg, [style*="background"], a, div');
-          if (!visual) visual = target as HTMLElement | null;
+          let visual: Element | null | undefined = target instanceof HTMLImageElement ? target : target?.closest('canvas,svg,picture');
+          if (!visual && target) {
+            // An image may have a transparent click-target or CSS background on top.
+            visual = document.elementsFromPoint(event.clientX, event.clientY).find(element =>
+              element instanceof HTMLImageElement || getComputedStyle(element).backgroundImage !== 'none');
+          }
           const box = visual?.getBoundingClientRect();
           if (!box || box.width < 10 || box.height < 10) {
-            hint.textContent = 'Chưa chọn được ảnh. Hãy bấm vào ảnh hoặc kéo khoanh vùng.';
+            hint.textContent = 'Chưa chọn được ảnh. Nhấn Esc rồi dùng Khoanh vùng.';
             return;
           }
           const x = Math.max(0, box.left), y = Math.max(0, box.top);

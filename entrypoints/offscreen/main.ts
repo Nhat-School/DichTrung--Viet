@@ -1,7 +1,8 @@
 import { TranslationEngine } from '../../lib/translator';
 import { OcrEngine } from '../../lib/ocr';
+import { getSettings } from '../../lib/storage';
 import { AppError, errorMessage, type EngineRequest } from '../../lib/types';
-const translator = new TranslationEngine();
+const translator = new TranslationEngine(undefined, async () => (await getSettings()).onlineFallback);
 const ocr = new OcrEngine();
 chrome.runtime.onMessage.addListener((message, _sender, respond) => {
   if (message?.target !== 'offscreen') return;
@@ -14,7 +15,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
       case 'cancel-ocr': return ocr.cancel(request.jobId);
       case 'ocr': return ocr.recognize(request.image, request.crop, request.jobId, (progress, status) => {
         void chrome.runtime.sendMessage({ type: 'ocr-progress', jobId: request.jobId, progress, status }).catch(() => {});
-      });
+      }, request.language);
     }
   })().then(data => respond({ ok: true, data })).catch(error => respond({ ok: false, error: errorMessage(error), code: error instanceof AppError ? error.code : 'ERROR' }));
   return true;

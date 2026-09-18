@@ -1,15 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { request } from '../lib/messages';
 import { TranslationEngine } from '../lib/translator';
-import { DEFAULT_SETTINGS } from '../lib/storage';
-import { AppError, errorMessage, siteFor, type Direction, type EngineStatus, type OcrResult, type PageStatus, type Rate, type Settings } from '../lib/types';
+import { splitText } from '../lib/text-chunks';
+import { DEFAULT_SETTINGS, getSettings } from '../lib/storage';
+import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type Direction, type EngineStatus, type OcrResult, type OcrState, type PageStatus, type Rate, type Settings } from '../lib/types';
 
 type Tab = 'page' | 'image' | 'write' | 'settings';
-interface OcrState { state: 'working' | 'done' | 'error'; progress?: number; result?: OcrResult; error?: string; jobId?: string; expires: number; }
 const availabilityLabels: Record<string, string> = { available: 'Sẵn sàng', downloadable: 'Cần tải gói ngôn ngữ', downloading: 'Đang tải…', unavailable: 'Chưa khả dụng', unsupported: 'Trình duyệt chưa hỗ trợ' };
 
-function Brand() {
-  return <header className="brand"><span className="brand-mark" aria-hidden="true">中<span>vi</span></span><div><strong>TranslateChina</strong><span className="brand-caption">HIỂU RÕ TRƯỚC KHI MUA</span></div><span className="local-tag"><i /> Trên máy</span></header>;
+function Brand({ online }: { online: boolean }) {
+  return <header className="brand"><span className="brand-mark" aria-hidden="true">中<span>vi</span></span><div><strong>TranslateChina</strong><span className="brand-caption">HIỂU RÕ TRƯỚC KHI MUA</span></div><span className="local-tag"><i /> {online ? 'Có dịch trực tuyến' : 'Trên máy'}</span></header>;
 }
 
 export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; initialTab?: Tab }) {
@@ -63,7 +63,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
   const [ocrTranslation, setOcrTranslation] = useState('');
   const [ocrTranslating, setOcrTranslating] = useState(false);
   const ocrGeneration = useRef(0);
-  const engine = useMemo(() => new TranslationEngine(), []);
+  const engine = useMemo(() => new TranslationEngine(undefined, async () => (await getSettings()).onlineFallback), []);
   const site = active?.url ? siteFor(active.url) : undefined;
 
   const refreshTab = useCallback(async () => {
@@ -95,8 +95,8 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
         setOcr((changes.ocr.newValue as OcrState) || null);
       }
     };
-    chrome.storage.onChanged.addListener(storageChanged);
-    return () => { chrome.tabs.onActivated.removeListener(tabsChanged); chrome.tabs.onUpdated.removeListener(tabsChanged); chrome.storage.onChanged.removeListener(storageChanged); };
+    chrome.storage?.onChanged?.addListener(storageChanged);
+    return () => { chrome.tabs.onActivated.removeListener(tabsChanged); chrome.tabs.onUpdated.removeListener(tabsChanged); chrome.storage?.onChanged?.removeListener(storageChanged); };
   }, [popup, refresh, refreshTab]);
 
   useEffect(() => {
@@ -126,6 +126,26 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     try { const value = await request<Settings>({ type: 'set-settings', settings: next }); setSettings(value); setRate(await request<Rate | null>({ type: 'get-rate' })); void refreshTab(); }
     catch (e) { setError(errorMessage(e)); }
   }
+  function enableSite() {
+    if (!active?.id || !site) return;
+    const pattern = sitePattern(site);
+    if (!pattern) return;
+    const tabId = active.id;
+    setError('');
+    void chrome.permissions.request({ origins: [pattern] }).then(async granted => {
+      if (!granted) { setNotice('Chưa cấp quyền. Website chưa được bật dịch.'); return; }
+      setSettings(await request<Settings>({ type: 'enable-site', tabId }));
+      setNotice('Đã bật dịch cho website này. Các lần mở sau sẽ tự dịch.');
+      await refreshTab();
+    }).catch(e => setError(errorMessage(e)));
+  }
+  function setOnlineFallback(enabled: boolean) {
+    if (!enabled) { void updateSettings({ onlineFallback: false }); return; }
+    void chrome.permissions.request({ origins: ['https://translate.googleapis.com/*'] }).then(granted => {
+      if (granted) return updateSettings({ onlineFallback: true });
+      setNotice('Chưa cấp quyền. Vẫn chỉ dịch trên máy.');
+    }).catch(e => setError(errorMessage(e)));
+  }
   async function refreshRate() {
     setRefreshing(true); setError('');
     try { const value = await request<Rate | null>({ type: 'get-rate', force: true }); setRate(value); if (!value) setError('Chưa lấy được tỷ giá. Thử lại hoặc nhập tỷ giá riêng trong Thiết lập.'); }
@@ -136,7 +156,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     void chrome.sidePanel.open({ tabId: active.id }).then(() => { if (popup) window.close(); }).catch(e => setError(errorMessage(e)));
   }
   function capture(mode: 'region' | 'image') {
-    if (!active?.id || !site) { setError('Mở Taobao hoặc 1688 rồi bấm biểu tượng extension để chọn vùng ảnh.'); return; }
+    if (!active?.id || !site) { setError('Mở website rồi bấm biểu tượng extension để chọn vùng ảnh.'); return; }
     setError('');
     const tabId = active.id;
     // Call open synchronously in the click handler so Chrome sees the gesture.
@@ -207,7 +227,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     const generation = ++ocrGeneration.current;
     setOcrTranslating(true); setError(''); setOcrTranslation('');
     try {
-      const chunks = ocrText.match(/[\s\S]{1,1800}(?:\n|$)|[\s\S]{1,1800}/g) || [];
+      const chunks = splitText(ocrText);
       const output: string[] = [];
       for (const chunk of chunks) {
         if (generation !== ocrGeneration.current) return;
@@ -230,34 +250,36 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
   </section>;
 
   return <div className={`app ${popup ? 'popup' : ''}`}>
-    <Brand />
+    <Brand online={settings.onlineFallback} />
     <main>
-      <div className="intro"><span className="eyebrow">TAOBAO & 1688</span><h1>Mua hàng,<br /><em>hiểu rõ.</em></h1><p>Tiếng Việt trên trang. Giá quy đổi trong tầm mắt.</p><span className="intro-glyph" aria-hidden="true">译</span></div>
+      <div className="intro"><span className="eyebrow">TRUNG → VIỆT · MỌI WEBSITE</span><h1>Mua hàng,<br /><em>hiểu rõ.</em></h1><p>Đọc web tiếng Trung. Mua hàng bằng tiếng Việt.</p><span className="intro-glyph" aria-hidden="true">译</span></div>
       {!popup && <nav aria-label="Công cụ">{([['page', 'Trang web'], ['image', 'Dịch ảnh'], ['write', 'Tìm & nhắn'], ['settings', 'Thiết lập']] as [Tab, string][]).map(([id, label]) => <button key={id} className={tab === id ? 'selected' : ''} onClick={() => { setTab(id); setError(''); setNotice(''); }}>{label}</button>)}</nav>}
       {error && <div className="message error" role="alert">{error}<button className="dismiss" aria-label="Đóng lỗi" onClick={() => setError('')}>×</button></div>}
       {notice && <div className="message success" role="status">{notice}<button className="dismiss" aria-label="Đóng thông báo" onClick={() => setNotice('')}>×</button></div>}
 
       {(popup || tab === 'page') && <>
-        <section className="site-card"><div className="row"><div><span className="eyebrow">TRANG ĐANG XEM</span><h2>{site ? site === 'taobao' ? 'Taobao' : '1688' : 'Mở một trang mua hàng'}</h2></div>{site && <label className="switch"><input type="checkbox" aria-label={`Tự dịch ${site}`} checked={settings.enabled[site]} onChange={event => void updateSettings({ enabled: { ...settings.enabled, [site]: event.target.checked } })} /><span /></label>}</div><p className="muted">{site ? settings.enabled[site] ? 'Dịch sang tiếng Việt và hiển thị giá VNĐ.' : 'Đang xem bản gốc. Bật lại khi cần dịch.' : 'Công cụ tự hoạt động trên Taobao và 1688.'}</p>
+        <section className="site-card"><div className="row"><div><span className="eyebrow">TRANG ĐANG XEM</span><h2>{site ? site === 'taobao' ? 'Taobao' : site === '1688' ? '1688' : new URL(site).hostname : 'Mở một website'}</h2></div>{site && <label className="switch"><input type="checkbox" aria-label={`Tự dịch ${site}`} checked={!!settings.enabled[site]} onChange={event => { if (event.target.checked && !isCommerceSite(site)) enableSite(); else void updateSettings({ enabled: { ...settings.enabled, [site]: event.target.checked } }); }} /><span /></label>}</div><p className="muted">{site ? settings.enabled[site] ? isCommerceSite(site) ? 'Dịch sang tiếng Việt và hiển thị giá VNĐ.' : 'Tự dịch chữ tiếng Trung trên website này.' : 'Đang xem bản gốc. Bật lại khi cần dịch.' : 'Mở website HTTP/HTTPS cần dịch rồi bấm biểu tượng extension.'}</p>
           {pageStatus?.error && <p className="warning">{pageStatus.error}</p>}
           {site && pageStatus && <div className="status-line"><i />{pageStatus.translated} đoạn đã dịch {pageStatus.pending > 0 ? '· Đang xử lý…' : ''}</div>}
-          {site && !pageStatus && <p className="warning">Tải lại trang mua hàng sau khi cài hoặc cập nhật extension.</p>}
+          {site && !isCommerceSite(site) && !settings.enabled[site] && <button className="primary full" onClick={enableSite}>Cho phép dịch website này</button>}
+          {site && settings.enabled[site] && !pageStatus && <p className="warning">Tải lại trang mua hàng sau khi cài hoặc cập nhật extension.</p>}
         </section>
-        {rateCard}
+        {isCommerceSite(site) && rateCard}
         <section><div className="section-heading"><h2>Chữ nằm trong ảnh?</h2><span className="pill">OCR</span></div><p className="muted">Chọn phần đang thấy trên màn hình để đọc bằng tiếng Việt.</p><div className="two-buttons"><button className="secondary" disabled={!site} onClick={() => capture('region')}>⌗ Khoanh vùng</button><button className="secondary" disabled={!site} onClick={() => capture('image')}>▧ Chọn ảnh</button></div></section>
         {popup ? <button className="primary full" onClick={openPanel}>Mở bảng công cụ <span>↗</span></button> : <div className="note">Rê chuột lên đoạn đã dịch để xem bản gốc. Tắt công tắc để phục hồi nguyên văn trên website này.</div>}
       </>}
 
       {!popup && tab === 'image' && <>
         <div className="section-heading"><h2>Đọc chữ trong ảnh</h2><span className="pill">Trên máy</span></div>
-        <p className="muted">Khoanh vùng chữ hoặc bấm ảnh đang thấy. Ảnh dài chỉ lấy phần trong màn hình.</p>
+        <p className="muted">Khoanh sát phần chữ để đọc chính xác hơn; tránh chọn cả ảnh sản phẩm nếu chữ quá nhỏ. Ảnh dài chỉ lấy phần trong màn hình.</p><label className="field">Kiểu chữ trong ảnh<select value={settings.ocrLanguage || 'chi_sim'} onChange={event => void updateSettings({ ocrLanguage: event.target.value as 'chi_sim' | 'chi_tra' })}><option value="chi_sim">Trung giản thể · Taobao, 1688</option><option value="chi_tra">Trung phồn thể · Đài Loan, Hong Kong</option></select></label>
         <div className="two-buttons"><button className="secondary" onClick={() => capture('region')}>⌗ Khoanh vùng</button><button className="secondary" onClick={() => capture('image')}>▧ Chọn ảnh</button></div>
         {!ocr && <div className="empty-state"><span>文 → A</span><h3>Một vùng ảnh, rõ nghĩa hơn.</h3><p>Bấm biểu tượng extension trên tab mua hàng để cấp quyền chụp, rồi chọn vùng chữ.</p></div>}
-        {ocr?.state === 'working' && <section className="work-card" aria-live="polite"><h3>Đang nhận diện chữ…</h3><progress max="1" value={ocr.progress || 0} /><p className="muted">Lần đầu cần khởi tạo bộ nhận diện trên máy.</p><button className="secondary" onClick={() => void request({ type: 'cancel-ocr' }).catch(e => setError(errorMessage(e)))}>Hủy nhận diện</button></section>}
+        {ocr?.state === 'working' && <section className="work-card" aria-live="polite"><h3>{ocr.status || 'Đang nhận diện chữ…'}</h3><progress max="1" value={ocr.progress || 0} /><p className="muted">Lần đầu cần khởi tạo bộ nhận diện trên máy.</p><button className="secondary" onClick={() => void request({ type: 'cancel-ocr' }).catch(e => setError(errorMessage(e)))}>Hủy nhận diện</button></section>}
         {ocr?.state === 'error' && <p className="message error" role="alert">{ocr.error}</p>}
         {ocr?.result && <>
           <img className="ocr-preview" src={ocr.result.image} alt="Vùng ảnh vừa chọn để nhận diện" />
-          {(ocr.result.confidence < 65 || !ocr.result.text) && <p className="warning">Ảnh khó đọc hoặc chưa tìm được chữ. Kiểm tra phần nhận diện; bạn có thể sửa hoặc chọn vùng rõ hơn.</p>}
+          {!ocr.result.text ? <p className="warning">Chưa tìm được chữ rõ ràng. Hãy khoanh sát phần chữ hoặc phóng to ảnh rồi thử lại.</p> : <p className="note">Đã đọc {ocr.result.lines?.length || 'các'} dòng. Đối chiếu với ảnh trước khi dịch: OCR vẫn có thể nhầm ký tự dù không báo lỗi.</p>}
+          {(ocr.result.lines || []).some(line => line.confidence < 65) && <div className="warning">Dòng cần kiểm tra kỹ: {(ocr.result.lines || []).filter(line => line.confidence < 65).map(line => line.text).join(' · ')}</div>}
           <label className="field">Chữ nhận diện · có thể sửa<textarea value={ocrText} onChange={e => { ocrGeneration.current++; setOcrTranslating(false); setOcrText(e.target.value); setOcrTranslation(''); }} rows={6} /></label>
           <button className="primary full" disabled={!ocrText.trim() || ocrTranslating} onClick={translateOcr}>{ocrTranslating ? 'Đang dịch…' : 'Dịch sang tiếng Việt'}</button>
           {ocrTranslation && <div className="translation-result"><div className="row"><span className="eyebrow">TIẾNG VIỆT</span><button className="text-button" onClick={() => void copy(ocrTranslation)}>Sao chép</button></div><p>{ocrTranslation}</p></div>}
@@ -391,10 +413,10 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
         <div className="section-heading"><h2>Bắt đầu miễn phí</h2><span className="pill">Không API key</span></div><p className="muted">Tải gói ngôn ngữ một lần bằng Chrome. Sau đó việc dịch diễn ra ngay trên thiết bị.</p>
         {(['zh-vi', 'vi-zh'] as Direction[]).map(direction => <section className="model-card" key={direction}><div className="row"><div><h3>{direction === 'zh-vi' ? 'Trung → Việt' : 'Việt → Trung'}</h3><p className="muted small">{availabilityLabels[statuses.find(s => s.direction === direction)?.state || ''] || 'Đang kiểm tra…'}</p></div><button className="secondary compact" disabled={!!initializing} onClick={() => initialize(direction)}>{initializing === direction ? 'Đang tải…' : 'Khởi tạo'}</button></div>{initializing === direction && <progress max="1" value={download} />}</section>)}
         <p className="note">Nếu Chrome cần giao diện đang mở để dịch, hãy giữ bảng công cụ này mở. Khi gặp lỗi, thử khởi tạo lại rồi quay về trang mua hàng.</p>
-        <section><h2>Tự dịch theo website</h2>{(['taobao', '1688'] as const).map(name => <label className="setting-row" key={name}><span>{name === 'taobao' ? 'Taobao' : '1688'}</span><input type="checkbox" checked={settings.enabled[name]} onChange={e => void updateSettings({ enabled: { ...settings.enabled, [name]: e.target.checked } })} /></label>)}</section>
+        <section><h2>Tự dịch theo website</h2><p className="muted">Với website khác, mở trang và bấm Cho phép dịch website này. Bạn chỉ cấp quyền cho địa chỉ đó.</p>{Object.keys(settings.enabled).map(name => <label className="setting-row" key={name}><span>{name === 'taobao' ? 'Taobao' : name === '1688' ? '1688' : name.replace(/^https?:\/\//, '')}</span><input type="checkbox" checked={!!settings.enabled[name]} onChange={e => void updateSettings({ enabled: { ...settings.enabled, [name]: e.target.checked } })} /></label>)}</section>
         {rateCard}
         <section><h2>Tỷ giá riêng</h2><p className="muted">Nhập số VNĐ cho 1 CNY nếu bạn dùng tỷ giá của bên mua hộ. Bỏ trống để dùng nguồn tự động.</p><label className="field">1 CNY =<div className="input-unit"><input inputMode="decimal" placeholder="Ví dụ 3870.34" value={manualRate} onChange={e => setManualRate(e.target.value)} /><span>VNĐ</span></div></label><div className="two-buttons"><button className="secondary" onClick={() => void updateSettings({ manualRate })}>Lưu tỷ giá</button><button className="text-button" onClick={() => { setManualRate(''); void updateSettings({ manualRate: '' }); }}>Dùng tự động</button></div></section>
-        <section className="privacy"><h3>Dữ liệu ở lại trên máy</h3><p>Không tài khoản, quảng cáo hay theo dõi. Extension chỉ gọi Frankfurter để lấy tỷ giá; Chrome quản lý việc tải mô hình. Giá VNĐ là ước tính, chưa gồm các khoản phí chưa hiển thị.</p><p>Tỷ giá theo ngày. Bản dịch máy và chữ trong ảnh luôn cần đối chiếu khi thông tin chưa rõ.</p></section>
+        <section className="privacy"><h3>Bạn quyết định nơi dịch</h3><p>Mặc định dịch và nhận diện ảnh trên máy. Không tài khoản, quảng cáo hay theo dõi. Nếu bật dịch trực tuyến bên dưới, văn bản cần dịch có thể được gửi tới Google. Ảnh luôn nhận diện trên máy. Giá VNĐ là ước tính.</p><label className="setting-row"><span>Cho phép Google dịch khi bộ dịch trên máy chưa sẵn sàng</span><input type="checkbox" checked={settings.onlineFallback} onChange={event => setOnlineFallback(event.target.checked)} /></label><p>Tùy chọn miễn phí, không API key; nguồn trực tuyến không chính thức có thể bị giới hạn hoặc ngừng hoạt động.</p><p>Tỷ giá theo ngày. Bản dịch máy và chữ trong ảnh luôn cần đối chiếu khi thông tin chưa rõ.</p></section>
       </>}
       <footer><span>Miễn phí · Không tài khoản</span><button className="text-button" onClick={() => void chrome.runtime.openOptionsPage()}>Thiết lập ↗</button></footer>
     </main>

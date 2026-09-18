@@ -17,6 +17,9 @@ const requiredFiles = [
   'vendor/tessdata/chi_sim.traineddata.gz',
   'vendor/tessdata/chi_tra.traineddata.gz',
   'vendor/tessdata/eng.traineddata.gz',
+  'vendor/tessdata-best/chi_sim.traineddata.gz',
+  'vendor/tessdata-best/chi_tra.traineddata.gz',
+  'vendor/tessdata-best/eng.traineddata.gz',
 ];
 
 const missing = requiredFiles.filter(rel => {

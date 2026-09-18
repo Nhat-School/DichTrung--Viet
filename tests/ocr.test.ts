@@ -3,6 +3,10 @@ import { cropBounds } from '../lib/ocr';
 import type { Crop } from '../lib/types';
 
 describe('ocr module cropBounds', () => {
+  it('clips negative drag coordinates without widening the selection', () => {
+    expect(cropBounds({ x: -20, y: -10, width: 100, height: 60, viewportWidth: 1000, viewportHeight: 800 }, 2000, 1600))
+      .toEqual({ x: 0, y: 0, width: 160, height: 100 });
+  });
   it('scales coordinates correctly for standard 1x displays', () => {
     const crop: Crop = {
       x: 100,

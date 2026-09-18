@@ -1,5 +1,9 @@
 /** Exact shopping labels only: replacing substrings can invert an offer's meaning. */
 export const GLOSSARY: Record<string, string> = {
+  '首页': 'Trang chủ', '新闻': 'Tin tức', '文章': 'Bài viết', '目录': 'Mục lục',
+  '上一页': 'Trang trước', '下一页': 'Trang sau', '阅读更多': 'Đọc thêm', '返回': 'Quay lại',
+  '登录': 'Đăng nhập', '注册': 'Đăng ký', '设置': 'Cài đặt', '联系我们': 'Liên hệ',
+  '提交': 'Gửi', '取消': 'Hủy', '确定': 'Xác nhận', '加载更多': 'Tải thêm',
   '起批量': 'Số lượng đặt tối thiểu', '最小起订量': 'Số lượng đặt tối thiểu', '起订量': 'Số lượng đặt tối thiểu',
   '批发价': 'Giá bán sỉ', '阶梯价': 'Giá theo số lượng', '一件代发': 'Giao thay từng đơn',
   '现货': 'Hàng có sẵn', '预售': 'Đặt trước', '定金': 'Tiền đặt cọc', '尾款': 'Số tiền còn lại',
@@ -19,6 +23,30 @@ export const GLOSSARY: Record<string, string> = {
 };
 export const hasChinese = (text: string) => /[\p{Script=Han}]/u.test(text);
 
+/** Check numbers before accepting a fluent, unmasked translation. */
+export function preservesFacts(original: string, translated: string, direction: 'zh-vi' | 'vi-zh'): boolean {
+  const numbers = (value: string): string[] => Array.from(value.match(/\d+(?:[.,]\d+)*(?:%|％)?/g) || []).sort();
+  const remaining = numbers(translated);
+  for (const number of numbers(original)) {
+    const norm = number.replace('％', '%');
+    const index = remaining.findIndex(n => n.replace('％', '%') === norm);
+    if (index < 0) return false;
+    remaining.splice(index, 1);
+  }
+  const codes = original.match(direction === 'zh-vi' ? /[A-Za-z][A-Za-z0-9_.\/-]*/g : /\b[A-Z][A-Z0-9_.\/-]*\d[A-Za-z0-9_.\/-]*\b/g) || [];
+  const normTrans = translated.toLowerCase().replace(/[\s_.\/-]+/g, '');
+  return codes.every(code => {
+    const normCode = code.toLowerCase().replace(/[\s_.\/-]+/g, '');
+    if (!normCode) return true;
+    if (normTrans.includes(normCode)) return true;
+    // Common unit translations in e-commerce
+    if (normCode === 'cc' && (normTrans.includes('cm3') || normTrans.includes('phânkhối') || normTrans.includes('pk'))) return true;
+    if (normCode === 'v' && (normTrans.includes('volt') || normTrans.includes('vôn'))) return true;
+    if (normCode === 'w' && (normTrans.includes('watt') || normTrans.includes('oát'))) return true;
+    return false;
+  });
+}
+
 export function protectTokens(text: string, direction: 'zh-vi' | 'vi-zh') {
   const tokens: string[] = [];
   // For Vietnamese input, ordinary Latin words must remain translatable.
@@ -34,11 +62,16 @@ export function protectTokens(text: string, direction: 'zh-vi' | 'vi-zh') {
     restore(translated: string) {
       let result = translated;
       for (let i = 0; i < tokens.length; i++) {
-        const key = `ZXQ${i}QXZ`;
-        if (result.split(key).length !== 2) throw new Error('Bản dịch làm thay đổi số liệu hoặc mã hàng. Đã giữ nguyên văn để bạn đối chiếu.');
-        result = result.replace(key, () => tokens[i]);
+        // Regex accommodates casing (zxq0qxz) and spacing (ZXQ 0 QXZ) produced by translation engines
+        const pattern = new RegExp(`Z\\s*X\\s*Q\\s*${i}\\s*Q\\s*X\\s*Z`, 'i');
+        if (!pattern.test(result)) {
+          throw new Error('Bản dịch làm thay đổi số liệu hoặc mã hàng. Đã giữ nguyên văn để bạn đối chiếu.');
+        }
+        result = result.replace(pattern, () => tokens[i]);
       }
-      if (/ZXQ\d+QXZ/.test(result)) throw new Error('Bản dịch chứa mã bảo vệ không hợp lệ.');
+      if (/Z\s*X\s*Q\s*\d+\s*Q\s*X\s*Z/i.test(result)) {
+        throw new Error('Bản dịch chứa mã bảo vệ không hợp lệ.');
+      }
       return result;
     },
   };

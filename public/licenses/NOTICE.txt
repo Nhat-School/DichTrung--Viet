@@ -1,0 +1,21 @@
+TranslateChina uses the following open-source components:
+
+Tesseract.js and tesseract.js-core (Apache License 2.0)
+https://github.com/naptha/tesseract.js
+https://github.com/naptha/tesseract.js-core
+
+Tesseract OCR language data (Apache License 2.0)
+https://github.com/tesseract-ocr/tessdata_best
+https://github.com/tesseract-ocr/tessdata_fast
+Distribution mirror: https://github.com/naptha/tessdata
+
+React and React DOM (MIT)
+https://github.com/facebook/react
+
+Decimal.js (MIT)
+https://github.com/MikeMcl/decimal.js
+
+WXT (MIT; build tooling and runtime helpers)
+https://github.com/wxt-dev/wxt
+
+License texts are included in this directory.

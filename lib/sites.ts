@@ -1,6 +1,6 @@
-import type { Site } from './types';
+import type { CommerceSite } from './types';
 export interface SiteAdapter { priceSelectors: string[]; }
-export const adapters: Record<Site, SiteAdapter> = {
+export const adapters: Record<CommerceSite, SiteAdapter> = {
   taobao: { priceSelectors: ['[class*="price" i]', '[class*="Price"]', '[data-price]', '[itemprop="price"]'] },
   '1688': { priceSelectors: ['[class*="price" i]', '[class*="Price"]', '[class*="cost" i]', '[data-price]', '[itemprop="price"]'] },
 };

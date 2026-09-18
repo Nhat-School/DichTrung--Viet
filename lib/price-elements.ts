@@ -1,8 +1,8 @@
 import { adapters, isExcluded } from './sites';
 import { parsePrices, type Price } from './prices';
-import type { Site } from './types';
+import type { CommerceSite } from './types';
 
-export function findPriceElements(root: HTMLElement, site: Site, readText: (element: Element) => string): Array<{ element: Element; prices: Price[] }> {
+export function findPriceElements(root: HTMLElement, site: CommerceSite, readText: (element: Element) => string): Array<{ element: Element; prices: Price[] }> {
   const candidates = new Set<Element>();
   const selector = adapters[site].priceSelectors.join(',');
   for (const element of root.querySelectorAll(selector)) if (!isExcluded(element)) candidates.add(element);

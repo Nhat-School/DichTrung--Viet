@@ -1,12 +1,11 @@
 import { defineBackground } from 'wxt/utils/define-background';
-import { getSettings } from '../lib/storage';
+import { getSettings, localStorageArea } from '../lib/storage';
 import { loadRate, validateManualRate } from '../lib/currency';
-import { AppError, errorMessage, siteFor, type EngineRequest, type OcrState, type Rate, type Reply, type Request, type Settings } from '../lib/types';
+import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type EngineRequest, type OcrState, type Rate, type Reply, type Request } from '../lib/types';
 
 export default defineBackground(() => {
   let offscreenCreating: Promise<void> | undefined;
   let rateRequest: Promise<Rate | null> | undefined;
-  const captureGrants = new Map<number, number>();
   let job: { id: string; tabId: number } | undefined;
   const visibleEngines = new Map<string, chrome.runtime.Port>();
   const pendingVisible = new Map<string, { resolve: (value: Reply) => void; timer: ReturnType<typeof setTimeout>; port: chrome.runtime.Port }>();
@@ -77,31 +76,64 @@ export default defineBackground(() => {
     throw new AppError(result.code || 'ERROR', result.error);
   }
   async function translateBatch(texts: string[], direction: 'zh-vi' | 'vi-zh') {
-    if (!Array.isArray(texts) || !['zh-vi', 'vi-zh'].includes(direction)) throw new Error('Yêu cầu dịch không hợp lệ.');
+    if (!Array.isArray(texts) || texts.length > 80 || texts.some(text => typeof text !== 'string' || text.length > 6000) || !['zh-vi', 'vi-zh'].includes(direction)) throw new Error('Yêu cầu dịch không hợp lệ.');
     if (!texts.length) return [];
     const result = await offscreen({ action: 'translate-batch', texts, direction });
     if (result.ok) return result.data;
-    return Promise.all(texts.map(t => translate(t, direction)));
+    const settled = await Promise.allSettled(texts.map(t => translate(t, direction)));
+    if (settled.every(s => s.status === 'rejected') && settled.length > 0) {
+      throw (settled[0] as PromiseRejectedResult).reason;
+    }
+    return settled.map((s, i) => s.status === 'fulfilled' ? s.value : texts[i]);
   }
   async function getRate(force = false) {
     if (rateRequest) return rateRequest;
     rateRequest = (async () => {
       const settings = await getSettings();
-      const { rate: cached } = (await chrome.storage.local.get('rate')) as { rate?: Rate };
+      const storage = localStorageArea();
+      if (!storage) throw new AppError('STORAGE_UNAVAILABLE', 'Chrome chưa cung cấp bộ nhớ extension. Hãy tải lại extension tại chrome://extensions rồi tải lại trang.');
+      const { rate: cached } = (await storage.get('rate')) as { rate?: Rate };
       const rate = await loadRate({ cached, manualRate: settings.manualRate, force });
-      if (rate?.source === 'Frankfurter') await chrome.storage.local.set({ rate });
+      if (rate?.source === 'Frankfurter') await storage.set({ rate });
       return rate;
     })().finally(() => { rateRequest = undefined; });
     return rateRequest;
   }
   async function broadcast(type: string) {
-    const tabs = await chrome.tabs.query({ url: ['https://*.taobao.com/*', 'https://*.1688.com/*'] });
-    await Promise.allSettled(tabs.map(tab => tab.id !== undefined ? chrome.tabs.sendMessage(tab.id, { type }) : Promise.resolve()));
+    const tabs = await chrome.tabs.query({});
+    await Promise.allSettled(tabs.filter(tab => siteFor(tab.url || '')).map(tab => tab.id !== undefined ? chrome.tabs.sendMessage(tab.id, { type }) : Promise.resolve()));
+  }
+  function contentFiles() {
+    return chrome.runtime.getManifest().content_scripts?.find(script => script.matches?.some(pattern => pattern.includes('taobao.com')))?.js || ['content-scripts/content.js'];
+  }
+  let syncingSites: Promise<void> = Promise.resolve();
+  function syncSites() {
+    syncingSites = syncingSites.catch(() => {}).then(async () => {
+      const { enabled } = await getSettings();
+      const desired: chrome.scripting.RegisteredContentScript[] = [];
+      for (const [site, on] of Object.entries(enabled)) {
+        const pattern = sitePattern(site);
+        if (!on || isCommerceSite(site) || !pattern || !await chrome.permissions.contains({ origins: [pattern] })) continue;
+        const id = 'tc-' + [...site].map(char => char.charCodeAt(0).toString(16)).join('');
+        desired.push({ id, matches: [pattern], js: contentFiles(), runAt: 'document_idle', persistAcrossSessions: true });
+      }
+      const existing = (await chrome.scripting.getRegisteredContentScripts()).filter(script => script.id.startsWith('tc-'));
+      const remove = existing.filter(script => !desired.some(next => next.id === script.id)).map(script => script.id);
+      if (remove.length) await chrome.scripting.unregisterContentScripts({ ids: remove });
+      const add = desired.filter(script => !existing.some(previous => previous.id === script.id));
+      if (add.length) await chrome.scripting.registerContentScripts(add);
+    });
+    return syncingSites;
+  }
+  async function ensureTabScript(tabId: number) {
+    try { const status = await chrome.tabs.sendMessage(tabId, { type: 'page-status' }); if (status) return; } catch { /* New tab or updated extension. */ }
+    await chrome.scripting.executeScript({ target: { tabId }, files: contentFiles() });
   }
   async function startCapture(tabId: number, mode: 'region' | 'image') {
     const tab = await chrome.tabs.get(tabId);
-    if (!siteFor(tab.url || '')) throw new Error('Mở tab Taobao hoặc 1688 đang xem để chọn ảnh.');
-    captureGrants.set(tabId, Date.now() + 600000);
+    if (!tab.active || !siteFor(tab.url || '')) throw new Error('Mở một website HTTP/HTTPS đang xem để chọn ảnh.');
+    await ensureTabScript(tabId);
+    await chrome.storage.session.set({ [`capture:${tabId}`]: Date.now() + 120000 });
     await chrome.tabs.sendMessage(tabId, { type: 'select-capture', mode });
   }
   async function cancelOcr() {
@@ -112,16 +144,26 @@ export default defineBackground(() => {
   }
   async function capture(crop: import('../lib/types').Crop, sender: chrome.runtime.MessageSender) {
     const tabId = sender.tab?.id;
-    if (tabId === undefined || !siteFor(sender.tab?.url || '')) throw new Error('Mở tab Taobao hoặc 1688 đang xem để chọn ảnh.');
-    captureGrants.delete(tabId);
+    if (tabId === undefined || !siteFor(sender.tab?.url || '')) throw new Error('Mở website đang xem để chọn ảnh.');
+    const key = `capture:${tabId}`;
+    const grant = await chrome.storage.session.get(key);
+    await chrome.storage.session.remove(key);
+    if (typeof grant[key] !== 'number' || grant[key] < Date.now()) throw new Error('Vùng chọn đã hết hạn. Bấm biểu tượng extension và chọn lại.');
     const currentTab = await chrome.tabs.get(tabId);
-    const image = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
+    const [active] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
+    if (active?.id !== tabId) throw new Error('Tab đã thay đổi. Hãy chọn lại vùng ảnh.');
+    let image: string;
+    try { image = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' }); }
+    catch { throw new Error('Chrome cần quyền chụp tab: bấm biểu tượng extension trên thanh công cụ rồi chọn lại vùng ảnh.'); }
+    const [after] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
+    if (after?.id !== tabId) throw new Error('Tab đã thay đổi trong lúc chụp. Ảnh đã được bỏ.');
     if (job) await cancelOcr();
     const current = { id: crypto.randomUUID(), tabId };
     job = current;
     await chrome.storage.session.set({ ocr: { jobId: current.id, tabId, state: 'working', progress: 0, expires: Date.now() + 5 * 60000 } });
     await chrome.alarms.create('clear-ocr', { delayInMinutes: 5 });
-    void offscreen({ action: 'ocr', image, crop, jobId: current.id }).then(async result => {
+    const settings = await getSettings();
+    void offscreen({ action: 'ocr', image, crop, jobId: current.id, language: settings.ocrLanguage }).then(async result => {
       if (job?.id !== current.id) return;
       job = undefined;
       await chrome.storage.session.set({ ocr: { jobId: current.id, tabId, state: result.ok ? 'done' : 'error', ...(result.ok ? { result: result.data } : { error: result.error }), expires: Date.now() + 5 * 60000 } });
@@ -160,9 +202,14 @@ export default defineBackground(() => {
     if (sender.id !== chrome.runtime.id || (!extensionUI && !siteFor(sender.tab?.url || ''))) return;
     (async () => {
       switch (message.type as string) {
-        case 'translate': return translate((message as any).text, (message as any).direction);
-        case 'translate-batch': return translateBatch((message as any).texts, (message as any).direction);
-        case 'get-state': return { settings: await getSettings(), rate: await getRate() };
+        case 'translate': case 'translate-batch': {
+          if (!extensionUI) {
+            const site = siteFor(sender.tab?.url || '')!;
+            if (!(await getSettings()).enabled[site]) throw new AppError('SITE_DISABLED', 'Đã tắt dịch trên website này.');
+          }
+          return message.type === 'translate' ? translate(message.text, message.direction) : translateBatch((message as Extract<Request, { type: 'translate-batch' }>).texts, (message as Extract<Request, { type: 'translate-batch' }>).direction);
+        }
+        case 'get-state': return { settings: await getSettings(), rate: extensionUI || isCommerceSite(siteFor(sender.tab?.url || '')) ? await getRate() : null };
         case 'get-rate': {
           const rate = await getRate((message as any).force === true);
           if ((message as any).force) void broadcast('rate-updated');
@@ -173,8 +220,19 @@ export default defineBackground(() => {
           const next = (message as Extract<Request, { type: 'set-settings' }>).settings;
           const settings = await getSettings();
           if (next.manualRate !== undefined) settings.manualRate = validateManualRate(next.manualRate);
-          if (next.enabled) for (const key of ['taobao', '1688'] as const) if (typeof next.enabled[key] === 'boolean') settings.enabled[key] = next.enabled[key];
-          await chrome.storage.local.set({ settings });
+          if (next.ocrLanguage === 'chi_sim' || next.ocrLanguage === 'chi_tra') settings.ocrLanguage = next.ocrLanguage;
+          if (typeof next.onlineFallback === 'boolean') {
+            if (next.onlineFallback && !await chrome.permissions.contains({ origins: ['https://translate.googleapis.com/*'] })) throw new Error('Chưa cấp quyền dịch trực tuyến.');
+            settings.onlineFallback = next.onlineFallback;
+          }
+          if (next.enabled) for (const [key, value] of Object.entries(next.enabled)) if (sitePattern(key) && typeof value === 'boolean') {
+            if (value && !isCommerceSite(key) && !await chrome.permissions.contains({ origins: [sitePattern(key)!] })) throw new Error('Bấm Cho phép dịch trên website này để cấp quyền.');
+            settings.enabled[key] = value;
+          }
+          const storage = localStorageArea();
+          if (!storage) throw new AppError('STORAGE_UNAVAILABLE', 'Chrome chưa cung cấp bộ nhớ extension. Hãy tải lại extension tại chrome://extensions rồi tải lại trang.');
+          await storage.set({ settings });
+          await syncSites();
           // Do not let an in-flight old settings request win over the new setting.
           if (rateRequest) await rateRequest;
           void broadcast('settings-updated');
@@ -184,6 +242,23 @@ export default defineBackground(() => {
           const result = await offscreen({ action: 'status' });
           if (!result.ok) throw new Error(result.error);
           return result.data;
+        }
+        case 'enable-site': {
+          if (!extensionUI) throw new Error('Bật website từ bảng công cụ.');
+          const tabId = (message as Extract<Request, { type: 'enable-site' }>).tabId;
+          const tab = await chrome.tabs.get(tabId);
+          const site = siteFor(tab.url || '');
+          const pattern = site && sitePattern(site);
+          if (!site || !pattern || !await chrome.permissions.contains({ origins: [pattern] })) throw new Error('Chưa cấp quyền cho website này.');
+          const settings = await getSettings();
+          settings.enabled[site] = true;
+          const storage = localStorageArea();
+          if (!storage) throw new AppError('STORAGE_UNAVAILABLE', 'Chrome chưa cung cấp bộ nhớ extension. Hãy tải lại extension tại chrome://extensions rồi tải lại trang.');
+          await storage.set({ settings });
+          await syncSites();
+          await ensureTabScript(tabId);
+          await chrome.tabs.sendMessage(tabId, { type: 'settings-updated' });
+          return settings;
         }
         case 'start-capture': {
           if (!extensionUI) throw new Error('Bắt đầu từ biểu tượng extension.');
@@ -220,15 +295,31 @@ export default defineBackground(() => {
 
   chrome.runtime.onInstalled.addListener(async ({ reason }) => {
     await chrome.contextMenus.removeAll();
-    chrome.contextMenus.create({ id: 'tc-image', title: 'TranslateChina: Dịch vùng ảnh đang thấy', contexts: ['image'], documentUrlPatterns: ['https://*.taobao.com/*', 'https://*.1688.com/*'] });
+    chrome.contextMenus.create({ id: 'tc-image', title: 'TranslateChina: Dịch chữ trong ảnh', contexts: ['image'], documentUrlPatterns: ['http://*/*', 'https://*/*'] });
+    await syncSites();
     if (reason === 'install') await chrome.runtime.openOptionsPage();
   });
   chrome.contextMenus.onClicked.addListener((info, tab) => {
     if (info.menuItemId === 'tc-image' && tab?.id) {
       void chrome.sidePanel.open({ tabId: tab.id }).catch(() => {});
-      void startCapture(tab.id, 'image').catch(() => {});
+      void new Promise(resolve => setTimeout(resolve, 300)).then(() => startCapture(tab.id!, 'image')).catch(async error => {
+        await chrome.storage.session.set({ ocr: { state: 'error', error: errorMessage(error), expires: Date.now() + 5 * 60000 } });
+      });
     }
   });
   chrome.alarms.onAlarm.addListener(alarm => { if (alarm.name === 'clear-ocr') void cancelOcr(); });
-  chrome.tabs.onRemoved.addListener(tabId => { captureGrants.delete(tabId); });
+  chrome.tabs.onRemoved.addListener(tabId => { void chrome.storage.session.remove(`capture:${tabId}`); });
+  chrome.runtime.onStartup.addListener(() => void syncSites());
+  chrome.permissions.onRemoved.addListener(() => {
+    void (async () => {
+      const settings = await getSettings();
+      for (const site of Object.keys(settings.enabled)) if (!isCommerceSite(site) && sitePattern(site) && !await chrome.permissions.contains({ origins: [sitePattern(site)!] })) settings.enabled[site] = false;
+      if (!await chrome.permissions.contains({ origins: ['https://translate.googleapis.com/*'] })) settings.onlineFallback = false;
+      const storage = localStorageArea();
+      if (!storage) return;
+      await storage.set({ settings });
+      await syncSites();
+      await broadcast('settings-updated');
+    })();
+  });
 });

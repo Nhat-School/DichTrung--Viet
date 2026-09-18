@@ -1,105 +1,68 @@
-# TranslateChina — Tiện ích Chrome Mua Hàng Trung Quốc Bằng Tiếng Việt
+# TranslateChina 0.2 — Dịch Trung–Việt trên Chrome
 
-**TranslateChina** là tiện ích mở rộng (Chrome Extension) dành cho máy tính, giúp bạn mua sắm trực tiếp trên **Taobao** và **1688** bằng tiếng Việt, quy đổi giá tiền sang **VNĐ** theo thời gian thực và hỗ trợ **dịch chữ trong ảnh** bằng nhận diện OCR trên máy.
+Extension miễn phí cho Chrome máy tính: dịch website tiếng Trung, hỗ trợ mua hàng Taobao/1688, quy đổi CNY → VNĐ và đọc chữ trong ảnh. Không cần tài khoản hay API key.
 
----
+## Cài hoặc cập nhật
 
-## 🌟 Điểm Nổi Bật
+Bản build sẵn nằm trong `.output/chrome-mv3`.
 
-- **100% Xử lý trên máy (On-Device)**: Không cần tạo tài khoản, không cần API key, không gửi dữ liệu người dùng hay nội dung trang web về máy chủ trung gian.
-- **Dịch trực tiếp trên trang**: Dịch tiêu đề, thông số kỹ thuật, mô tả, phân loại màu sắc, kích thước và đánh giá sản phẩm.
-- **Giữ bản gốc & Chống hiển thị nhầm (Stale Invalidation)**: Rê chuột lên đoạn đã dịch để đối chiếu bản gốc tiếng Trung. Khi bạn đổi mẫu, đổi phân loại (SKU), số lượng hoặc cuộn tải thêm, tiện ích tự động hủy kết quả dịch đã lỗi thời để đảm bảo không hiển thị nhầm thông số hay giá tiền.
-- **Quy đổi CNY → VNĐ**: Tự động tính giá VNĐ hiển thị cạnh giá tệ gốc dựa trên tỷ giá Frankfurter (cập nhật hàng ngày, lưu đệm 6 tiếng). Có chức năng nhập tỷ giá riêng để đối chiếu với bên mua hộ.
-- **Đọc chữ trong ảnh (OCR tiếng Trung)**: Sử dụng Tesseract.js / WebAssembly tích hợp sẵn trong extension (offline). Bạn chỉ cần khoanh vùng hoặc bấm vào ảnh trên màn hình để nhận diện và dịch sang tiếng Việt.
-- **Tìm hàng & Soạn tin nhắn**: Nhập tiếng Việt để dịch sang tiếng Trung (tìm kiếm sản phẩm hoặc nhắn tin thương lượng với người bán) kèm nút sao chép nhanh một chạm.
+1. Mở `chrome://extensions`, bật **Developer mode**.
+2. Nếu cài lần đầu, chọn **Load unpacked** và chọn thư mục trên.
+3. Nếu đã cài, bấm **Reload / Tải lại** trên thẻ TranslateChina, đóng bảng công cụ cũ và tải lại các tab đang dùng.
+4. Ghim biểu tượng extension trên thanh công cụ. Trong **Thiết lập**, bấm **Khởi tạo** cho hai chiều ngôn ngữ nếu Chrome yêu cầu tải mô hình.
 
----
+Chrome quản lý khả năng cung cấp/tải mô hình; không thể coi việc có API là mô hình đã sẵn sàng. Extension báo đúng trạng thái, không tự gửi văn bản ra ngoài nếu bộ dịch trên máy lỗi.
 
-## 🚀 Hướng Dẫn Cài Đặt (Load Unpacked)
+## Dịch website tiếng Trung khác
 
-Extension sẵn sàng để cài đặt trực tiếp vào trình duyệt Google Chrome thông qua tính năng **Tải tiện ích đã giải nén (Load unpacked)**:
+Taobao và 1688 tự bật theo cài đặt. Trên một website HTTP/HTTPS khác:
 
-### Bước 1: Chuẩn bị mã nguồn và build tiện ích
+1. Mở website, bấm biểu tượng TranslateChina.
+2. Bấm **Cho phép dịch website này** và chấp nhận quyền cho đúng địa chỉ đó.
+3. Website được ghi nhớ và tự dịch ở các lần mở sau. Bật/tắt riêng trong popup hoặc Thiết lập.
 
-Mở Terminal tại thư mục dự án và chạy:
+Quyền bổ sung là tùy chọn theo địa chỉ, không yêu cầu đọc mọi website khi cài đặt. Trang nội bộ Chrome, Chrome Web Store, PDF của trình duyệt, khung nhúng khác nguồn và nội dung Shadow DOM đóng có thể không cho phép chèn dịch; dùng khoanh ảnh nếu Chrome cho phép chụp. Tiện ích ưu tiên phần đang nhìn thấy và nội dung mới khi cuộn, giữ nguyên ô người dùng đang nhập, dịch thêm placeholder/title/aria-label/alt và xử lý đoạn văn dài. Rê chuột để đối chiếu bản gốc; tắt để phục hồi.
 
-```bash
-# Cài đặt các gói phụ thuộc (nếu chưa cài)
+Quy đổi tiền chỉ bật trên **Taobao/1688**, tránh nhầm số hoặc ký hiệu tiền ở website khác. Frankfurter cung cấp tỷ giá theo ngày; kiểm tra lại khi dùng nếu cache quá 6 giờ. Có tỷ giá tự nhập và trạng thái dùng dữ liệu cũ khi mất mạng. Giá quy đổi là ước tính, chưa tự tính các khoản phí không hiển thị.
+
+## Dịch chữ trong ảnh
+
+Đây là **OCR + dịch văn bản**, không phải tìm sản phẩm tương tự bằng hình ảnh.
+
+- Bấm biểu tượng extension → **Khoanh vùng** hoặc **Chọn ảnh**; cũng có menu chuột phải trên ảnh.
+- Chọn **giản thể** cho Taobao/1688; chọn **phồn thể** khi đọc ảnh từ Đài Loan/Hong Kong.
+- OCR sử dụng mô hình LSTM độ chính xác cao đóng gói cục bộ, chế độ chữ rải, phóng ảnh có giới hạn, hai lượt xử lý màu/tương phản và đối chiếu vị trí dòng. Ảnh không tải lên máy chủ OCR.
+- Bảng công cụ hiển thị ảnh gốc, chữ nhận diện có thể sửa, các dòng cần kiểm tra và nút **Dịch sang tiếng Việt**. Khoanh sát chữ thường tốt hơn chọn cả ảnh sản phẩm nhiều chi tiết.
+- Ảnh dài chỉ chụp phần đang nhìn thấy. Ảnh mờ, font cách điệu hoặc chữ quá nhỏ vẫn có thể đọc sai, kể cả khi điểm tin cậy cao. Không tự sửa từ dựa trên phỏng đoán.
+- Nếu Chrome từ chối chụp, bấm biểu tượng extension trên chính tab đó rồi chọn lại. Công cụ kiểm tra tab trước/sau chụp để không nhận nhầm ảnh từ tab khác.
+- Có thể hủy; ảnh và kết quả nhận diện trong bộ nhớ phiên tự xóa sau 5 phút.
+
+## Tìm hàng, nhắn người bán
+
+Tab **Tìm & nhắn** giữ riêng bản nháp tìm kiếm và lời nhắn. Có từ khóa gợi ý, mẫu hỏi shop và nút sao chép. Bạn tự dán vào ô tìm kiếm hoặc tự gửi tin; extension không gửi thay bạn.
+
+## Bộ dịch và quyền riêng tư
+
+Mặc định dùng Chrome Translator API trên thiết bị và từ điển nhãn thông dụng. Nội dung được dịch nguyên câu trước; nếu số liệu hoặc mã hàng bị thay đổi, công cụ thử bảo vệ các giá trị rồi dịch lại. Bộ kiểm tra này không thay thế việc đối chiếu nội dung và không bảo đảm mọi ý nghĩa đều chính xác.
+
+**Dịch trực tuyến là tùy chọn tắt mặc định.** Chỉ khi bạn bật rõ ràng trong Thiết lập và cấp quyền cho `translate.googleapis.com`, văn bản có thể được gửi đến Google khi bộ dịch trên máy chưa sẵn sàng. Nguồn trực tuyến miễn phí không chính thức có thể bị giới hạn hoặc thay đổi; không có cam kết hoạt động liên tục. Giao diện hiển thị khi tùy chọn này đang bật. Có thể tắt bất cứ lúc nào. Kể cả khi bật, ảnh vẫn chỉ nhận diện trên máy; chỉ phần chữ yêu cầu dịch mới có thể ra ngoài.
+
+Không có tài khoản, telemetry hay quảng cáo. Cài đặt lưu cục bộ; bản nháp lưu trong phiên bảng công cụ. Tỷ giá gọi Frankfurter; Chrome tự quản lý tải mô hình dịch.
+
+## Phát triển và kiểm thử
+
+```sh
 npm install
-
-# Kiểm tra mã nguồn, chạy 50 bài kiểm thử tự động và build tiện ích
-npm run check
+npm run assets      # tải tài nguyên OCR miễn phí một lần
+npm run check       # TypeScript, unit tests, bản build
+npm run test:e2e    # kiểm thử trình duyệt (chạy npm run build trước)
+npm run zip         # ZIP cài bằng Load unpacked sau khi giải nén
 ```
 
-Thư mục tiện ích sau khi build sẽ nằm tại: `.output/chrome-mv3`.
+Công nghệ: WXT, Manifest V3, React, TypeScript, Chrome Translator API, Decimal.js, Tesseract.js/WebAssembly. Mô hình OCR đóng gói khiến bản cài lớn hơn extension chỉ gọi API, đổi lại nhận diện ảnh không cần mạng.
 
-### Bước 2: Cài vào Google Chrome
+Các bài kiểm thử gồm tiền tệ, bảo toàn số liệu/mã hàng, lỗi bộ dịch và opt-in trực tuyến, chia văn bản dài, DOM động và thuộc tính bị thay đổi khi đang dịch, cấp phạm vi website, cắt ảnh theo tỷ lệ màn hình và ghép dòng OCR. Bộ 100 câu là kiểm tra bảo toàn token, **không phải** chứng nhận chất lượng dịch máy của 100 câu.
 
-1. Mở trình duyệt Google Chrome trên máy tính.
-2. Truy cập vào đường dẫn: `chrome://extensions` (hoặc vào menu Chrome → **Tiện ích mở rộng** → **Quản lý tiện ích mở rộng**).
-3. Bật công tắc **Chế độ dành cho nhà phát triển (Developer mode)** ở góc trên bên phải màn hình.
-4. Bấm nút **Tải tiện ích đã giải nén (Load unpacked)** ở góc trên bên trái.
-5. Chọn thư mục `.output/chrome-mv3` trong thư mục dự án này.
-6. Tiện ích **TranslateChina — Trung → Việt** sẽ xuất hiện trên thanh công cụ của Chrome. Bạn nên ghim (Pin) biểu tượng tiện ích để dễ thao tác.
+Kiểm thử trình duyệt tải bản extension đã build trong Chromium riêng, kiểm tra OCR thực trên ảnh xe đẩy được báo lỗi, dịch website ngoài hai sàn, phục hồi nguyên văn và bản nháp độc lập. Quyền cho website giả lập được cấp trong manifest tạm của bài test; hộp thoại cấp quyền Chrome cần kiểm tra tương tác khi cài thật. Không dùng tài khoản mua hàng và không thực hiện giao dịch.
 
----
-
-## 📖 Hướng Dẫn Sử Dụng
-
-### 1. Dịch trang Taobao / 1688
-- Khi bạn truy cập trang chi tiết sản phẩm hoặc tìm kiếm trên Taobao hoặc 1688, tiện ích sẽ tự động dịch các văn bản tiếng Trung sang tiếng Việt.
-- **Xem lại bản gốc**: Rê chuột (hover) vào bất kỳ đoạn văn bản nào đã dịch để xem chú thích bản gốc tiếng Trung.
-- **Bật/Tắt theo website**: Bấm vào biểu tượng extension trên thanh công cụ để bật/tắt tính năng tự dịch riêng cho Taobao hoặc 1688. Khi tắt, trang sẽ phục hồi nguyên văn bản gốc tiếng Trung.
-
-### 2. Xem giá quy đổi VNĐ
-- Bên cạnh các mức giá tiếng Trung (`¥...`, `...元`), tiện ích hiển thị nhãn giá ước tính bằng VNĐ (ví dụ: `≈ 385.000 ₫`).
-- Hỗ trợ đầy đủ giá đơn, khoảng giá (`¥19.90 - 39.90`), giá theo bậc số lượng (bán sỉ 1688) và phí vận chuyển nội địa.
-- Để cập nhật tỷ giá mới nhất hoặc nhập tỷ giá mua hộ riêng, bấm vào biểu tượng extension → tab **Thiết lập** (hoặc bấm nút làm mới tỷ giá `↻`).
-
-### 3. Dịch chữ trong ảnh (OCR)
-1. Trên trang mua hàng, bấm biểu tượng extension hoặc click chuột phải vào ảnh chọn **TranslateChina: Dịch vùng ảnh đang thấy**.
-2. Chọn **⌗ Khoanh vùng** để kéo chọn vùng chữ trên màn hình, hoặc **▧ Chọn ảnh** để bấm trực tiếp vào ảnh.
-3. Bảng công cụ bên phải (Side Panel) sẽ hiển thị ảnh đã cắt, chữ tiếng Trung nhận diện được (cho phép bạn sửa nếu ảnh mờ) và bản dịch tiếng Việt tương ứng.
-4. Ảnh và kết quả tạm thời sẽ tự động dọn dẹp sau 5 phút để bảo vệ quyền riêng tư.
-
-### 4. Tìm hàng & Nhắn người bán
-- Mở bảng công cụ tiện ích, chọn tab **Tìm & nhắn**.
-- **Tìm hàng**: Nhập tên sản phẩm bạn muốn tìm bằng tiếng Việt (ví dụ: `áo sơ mi nam vải đũi cộc tay`) → Bấm **Dịch sang tiếng Trung** → Bấm **Sao chép** để dán vào ô tìm kiếm của Taobao/1688.
-- **Nhắn người bán**: Soạn câu hỏi bằng tiếng Việt (ví dụ: `Sản phẩm này còn hàng không? Tôi mua 50 chiếc có giảm giá không?`) → Nhận bản dịch tiếng Trung chuẩn xác để gửi người bán.
-
----
-
-## 🛠 Lệnh Phát Triển & Kiểm Thử
-
-Dự án sử dụng **TypeScript**, **WXT Framework**, **React 19**, **Decimal.js**, **Tesseract.js** và **Vitest**:
-
-```bash
-# Khởi động môi trường phát triển (Hot reload)
-npm run dev
-
-# Chuẩn bị asset offline (tải mô hình OCR tiếng Trung và tạo icon)
-npm run assets
-
-# Kiểm tra kiểu dữ liệu TypeScript
-npm run typecheck
-
-# Chạy toàn bộ 50 unit test (tiền tệ, bộ lọc giá, từ điển, 100 câu mẫu, stale invalidation, OCR)
-npm test
-
-# Chạy kiểm thử tự động End-to-End với Playwright
-npm run test:e2e
-
-# Chạy quy trình kiểm tra toàn diện trước khi đóng gói
-npm run check
-
-# Đóng gói file ZIP để phân phối
-npm run zip
-```
-
----
-
-## 🔒 Cam Kết Quyền Riêng Tư & An Toàn
-
-- **Không tài khoản, không theo dõi**: Không lưu lịch sử duyệt web hay hành vi người dùng.
-- **Nguồn tỷ giá mở**: Sử dụng Frankfurter API công khai để lấy tỷ giá ngoại tệ, không yêu cầu API key.
-- **Bảo toàn số liệu**: Hệ thống Token Shield tự động bảo vệ các con số, mã sản phẩm, đường link và đơn vị đo lường trong quá trình dịch, chống việc dịch sai lệch số lượng hoặc giá cả hàng hóa.
+Ảnh hồi quy đã khôi phục bốn dòng thông số bị bỏ sót; chữ trắng cách điệu như `白色` vẫn có thể bị OCR nhầm thành `日色`. Vì vậy luôn giữ ảnh gốc và khả năng sửa chữ, không tuyên bố OCR chính xác 100%.

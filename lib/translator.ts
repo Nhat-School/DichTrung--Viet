@@ -1,11 +1,12 @@
 import { AppError, type Direction, type EngineStatus, type NativeTranslator, type NativeTranslatorAPI } from './types';
-import { GLOSSARY, protectTokens } from './glossary';
+import { GLOSSARY, preservesFacts, protectTokens } from './glossary';
 
 export const languagePair = (direction: Direction) => direction === 'zh-vi'
   ? { sourceLanguage: 'zh', targetLanguage: 'vi' }
   : { sourceLanguage: 'vi', targetLanguage: 'zh' };
 
 export function getNativeApi(): NativeTranslatorAPI | undefined {
+  if (typeof window !== 'undefined' && window.Translator) return window.Translator;
   if (typeof self !== 'undefined' && (self as any).translation) {
     const t = (self as any).translation;
     return {
@@ -58,7 +59,7 @@ export async function fetchTranslateFallback(text: string, direction: Direction)
   const src = direction === 'zh-vi' ? 'zh-CN' : 'vi';
   const tgt = direction === 'zh-vi' ? 'vi' : 'zh-CN';
   const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${src}&tl=${tgt}&dt=t&q=${encodeURIComponent(text)}`;
-  const res = await fetch(url, { signal: AbortSignal.timeout(10000) });
+  const res = await fetch(url, { credentials: 'omit', cache: 'no-store', signal: AbortSignal.timeout(10000) });
   if (!res.ok) throw new Error(`Nguồn dịch tạm lỗi (${res.status})`);
   const data = await res.json();
   if (!Array.isArray(data) || !Array.isArray(data[0])) throw new Error('Kết quả dịch không hợp lệ');
@@ -71,45 +72,27 @@ export class TranslationEngine {
   private pending = new Map<string, Promise<string>>();
   private tail: Promise<unknown> = Promise.resolve();
 
-  constructor(private api = getNativeApi) {}
+  constructor(private api = getNativeApi, private allowOnline: () => Promise<boolean> = async () => false) {}
 
   async status(): Promise<EngineStatus[]> {
     const api = this.api();
     return Promise.all((['zh-vi', 'vi-zh'] as Direction[]).map(async direction => {
-      if (api) {
-        try {
-          const state = await api.availability(languagePair(direction));
-          return { direction, state };
-        } catch {
-          // Native failed
-        }
-      }
-      return { direction, state: 'available' as const };
+      if (!api) return { direction, state: 'unsupported' as const };
+      try { return { direction, state: await api.availability(languagePair(direction)) }; }
+      catch { return { direction, state: 'unavailable' as const }; }
     }));
   }
 
-  /** Must be invoked directly in a click handler, before awaiting anything. */
+  /** Invoke directly from a click; downloading requires user activation. */
   initialize(direction: Direction, progress: (value: number) => void = () => {}): Promise<NativeTranslator> {
     const api = this.api();
-    if (!api) {
-      // Return a pseudo native translator using fallback
-      const pseudo: NativeTranslator = {
-        async translate(text: string) {
-          return fetchTranslateFallback(text, direction);
-        },
-        destroy() {},
-      };
-      return Promise.resolve(pseudo);
-    }
+    if (!api) return Promise.reject(new AppError('UNSUPPORTED', 'Chrome chưa cung cấp bộ dịch trên thiết bị. Kiểm tra Chrome hoặc bật dịch trực tuyến trong Thiết lập nếu bạn muốn.'));
     if (!this.models.has(direction)) {
-      const promise = api.create({
-        ...languagePair(direction),
-        monitor: monitor => {
-          monitor.addEventListener('downloadprogress', event => progress((event as Event & { loaded: number }).loaded));
-        },
-      });
+      const promise = api.create({ ...languagePair(direction), monitor: monitor => {
+        monitor.addEventListener('downloadprogress', event => progress((event as Event & { loaded: number }).loaded));
+      } });
       this.models.set(direction, promise);
-      promise.catch(() => this.models.delete(direction));
+      void promise.catch(() => this.models.delete(direction));
     }
     return this.models.get(direction)!;
   }
@@ -119,106 +102,62 @@ export class TranslationEngine {
     if (text.length > 6000) throw new AppError('TOO_LONG', 'Mỗi đoạn tối đa 6.000 ký tự. Hãy chia thành các đoạn ngắn hơn.');
     const direct = direction === 'zh-vi' ? GLOSSARY[text.trim()] : undefined;
     if (direct) return text.replace(text.trim(), direct);
-
-    const key = `${direction}:${text}`;
+    const online = await this.allowOnline();
+    const key = `${online}:${direction}:${text}`;
     const cached = this.cache.get(key);
     if (cached) return cached;
     const existing = this.pending.get(key);
     if (existing) return existing;
-
-    const task = (async () => {
-      const shield = protectTokens(text, direction);
-      const api = this.api();
-
-      let translated: string | undefined;
-      if (api) {
-        try {
-          const model = await this.initialize(direction);
-          const res = await (this.tail = this.tail.catch(() => {}).then(() => model.translate(shield.text)));
-          translated = res as string;
-        } catch {
-          // Native translation failed, try fallback
+    const task = this.tail.catch(() => {}).then(async () => {
+      let backend: (value: string) => Promise<string>;
+      try {
+        const api = this.api();
+        if (!api) throw new AppError('UNSUPPORTED', 'Bộ dịch trên thiết bị chưa khả dụng. Mở Thiết lập để kiểm tra.');
+        if (!this.models.has(direction) && await api.availability(languagePair(direction)) !== 'available') {
+          throw new AppError('NEED_SETUP', 'Mở Thiết lập và bấm Khởi tạo để tải bộ dịch cho chiều ngôn ngữ này.');
         }
+        let model: NativeTranslator;
+        try { model = await this.initialize(direction); }
+        catch { throw new AppError('NEED_VISIBLE', 'Chrome cần giao diện đang mở. Hãy mở bảng công cụ và khởi tạo bộ dịch.'); }
+        backend = value => model.translate(value);
+      } catch (error) {
+        if (!online || !await this.allowOnline()) throw error;
+        backend = async value => {
+          // Recheck consent at dispatch, even if this request was queued earlier.
+          if (!await this.allowOnline()) throw new AppError('ONLINE_DISABLED', 'Dịch trực tuyến đã được tắt.');
+          return fetchTranslateFallback(value, direction);
+        };
       }
-
-      if (!translated) {
-        translated = await fetchTranslateFallback(shield.text, direction);
+      // Give the model the real sentence first. Masking every number harms grammar/context.
+      let result = await backend(text);
+      if (!result.trim()) throw new Error('Bộ dịch trả về nội dung trống.');
+      if (!preservesFacts(text, result, direction)) {
+        const shield = protectTokens(text, direction);
+        try {
+          const shielded = await backend(shield.text);
+          result = shield.restore(shielded);
+        } catch {
+          // If shielded restoration fails, check whether result still preserves facts or throw
+        }
+        if (!preservesFacts(text, result, direction)) throw new Error('Bản dịch làm thay đổi số liệu hoặc mã hàng. Đã giữ nguyên văn.');
       }
-
-      const restored = shield.restore(translated);
-      this.cache.set(key, restored);
-      if (this.cache.size > 3000) this.cache.delete(this.cache.keys().next().value!);
-      return restored;
-    })();
-
+      this.cache.set(key, result);
+      if (this.cache.size > 1500) this.cache.delete(this.cache.keys().next().value!);
+      return result;
+    });
+    this.tail = task;
     this.pending.set(key, task);
-    try {
-      return await task;
-    } finally {
-      this.pending.delete(key);
-    }
+    try { return await task; } finally { this.pending.delete(key); }
   }
 
   async translateBatch(texts: string[], direction: Direction): Promise<string[]> {
-    if (!texts.length) return [];
-    const results: (string | undefined)[] = new Array(texts.length);
-    const uncachedIndices: number[] = [];
-
-    // 1. Resolve glossary and cache
-    for (let i = 0; i < texts.length; i++) {
-      const t = texts[i];
-      if (!t || !t.trim()) { results[i] = t; continue; }
-      const direct = direction === 'zh-vi' ? GLOSSARY[t.trim()] : undefined;
-      if (direct) { results[i] = t.replace(t.trim(), direct); continue; }
-      const key = `${direction}:${t}`;
-      const cached = this.cache.get(key);
-      if (cached) { results[i] = cached; continue; }
-      uncachedIndices.push(i);
+    if (texts.length > 80 || texts.some(text => typeof text !== 'string' || text.length > 6000)) {
+      throw new AppError('TOO_LONG', 'Lô dịch quá lớn. Hãy thử lại.');
     }
-
-    if (!uncachedIndices.length) return results as string[];
-
-    // 2. For remaining uncached items, group into chunks of up to 25 lines
-    const CHUNK_SIZE = 25;
-    for (let c = 0; c < uncachedIndices.length; c += CHUNK_SIZE) {
-      const slice = uncachedIndices.slice(c, c + CHUNK_SIZE);
-      const sliceTexts = slice.map(idx => texts[idx]);
-
-      const hasInternalNewline = sliceTexts.some(txt => txt.includes('\n'));
-      if (hasInternalNewline || sliceTexts.length === 1) {
-        const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
-        slice.forEach((idx, sIdx) => {
-          const res = parallel[sIdx];
-          results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
-        });
-      } else {
-        try {
-          const combined = sliceTexts.join('\n');
-          const translated = await this.translate(combined, direction);
-          const lines = translated.split('\n');
-          if (lines.length === sliceTexts.length) {
-            slice.forEach((idx, sIdx) => {
-              const res = lines[sIdx].trim();
-              results[idx] = res;
-              this.cache.set(`${direction}:${texts[idx]}`, res);
-            });
-          } else {
-            const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
-            slice.forEach((idx, sIdx) => {
-              const res = parallel[sIdx];
-              results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
-            });
-          }
-        } catch {
-          const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
-          slice.forEach((idx, sIdx) => {
-            const res = parallel[sIdx];
-            results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
-          });
-        }
-      }
+    const settled = await Promise.allSettled(texts.map(text => this.translate(text, direction)));
+    if (settled.every(s => s.status === 'rejected') && settled.length > 0) {
+      throw (settled[0] as PromiseRejectedResult).reason;
     }
-
-    return results.map((r, i) => r ?? texts[i]);
+    return settled.map((s, i) => s.status === 'fulfilled' ? s.value : texts[i]);
   }
 }

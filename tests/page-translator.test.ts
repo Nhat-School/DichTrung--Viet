@@ -11,6 +11,41 @@ describe('PageTranslator lifecycle and stale invalidation', () => {
     document.body.appendChild(root);
   });
 
+  it('translates article nodes longer than the engine limit and restores their exact source', async () => {
+    const source = '今天的新闻。'.repeat(1200);
+    root.textContent = source;
+    const translate = vi.fn(async (text: string) => { expect(text.length).toBeLessThanOrEqual(6000); return 'Nội dung bài viết.'; });
+    const translator = new PageTranslator(root, translate, () => {}, () => true);
+    translator.start(); await translator.scan();
+    expect(translate.mock.calls.length).toBeGreaterThan(1);
+    expect(root.textContent).toContain('Nội dung bài viết.');
+    translator.stop(); expect(root.textContent).toBe(source);
+  });
+
+  it('translates separate attributes on the same element and does not apply a stale placeholder', async () => {
+    root.innerHTML = '<input title="搜索" placeholder="新闻" aria-label="文章" value="用户输入">';
+    const input = root.querySelector('input')!;
+    let resolve!: (value: string) => void;
+    const pending = new Promise<string>(done => { resolve = done; });
+    const translator = new PageTranslator(root, async text => text === '新闻' ? pending : text === '文章' ? 'Bài viết' : text === '目录' ? 'Mục lục' : 'Tìm kiếm', () => {}, () => true);
+    translator.start();
+    const scan = translator.scan();
+    input.setAttribute('placeholder', '目录');
+    await Promise.resolve();
+    resolve('Tin tức');
+    await scan;
+    expect(input.placeholder).toBe('目录');
+    await translator.scan();
+    expect(input.placeholder).toBe('Mục lục');
+    expect(input.title).toBe('Tìm kiếm');
+    expect(input.getAttribute('aria-label')).toBe('Bài viết');
+    expect(input.value).toBe('用户输入');
+    translator.stop();
+    expect(input.placeholder).toBe('目录');
+    expect(input.title).toBe('搜索');
+    expect(input.getAttribute('aria-label')).toBe('文章');
+  });
+
   it('translates visible Chinese text nodes and stores original text', async () => {
     root.innerHTML = `
       <div class="product">
@@ -166,5 +201,40 @@ describe('PageTranslator lifecycle and stale invalidation', () => {
     expect(pwdInput.getAttribute('placeholder')).toBe('请输入登录密码');
     expect(badge.getAttribute('title')).toBe('正品保证');
   });
-});
 
+  it('translates valid product cards in a batch even if one card fails validation', async () => {
+    root.innerHTML = `
+      <div class="card1">沙滩车摩托车四轮</div>
+      <div class="card2">49cc汽油四轮摩托车</div>
+      <div class="card3">新款国标电动车成人</div>
+    `;
+
+    const mockTranslateBatch = vi.fn().mockImplementation(async (texts: string[]) => {
+      return texts.map(text => {
+        if (text === '沙滩车摩托车四轮') return 'Xe máy địa hình 4 bánh';
+        if (text === '49cc汽油四轮摩托车') return text; // e.g. kept as original because of validation
+        if (text === '新款国标电动车成人') return 'Xe điện tiêu chuẩn mới cho người lớn';
+        return text;
+      });
+    });
+
+    const translator = new PageTranslator(
+      root,
+      async text => text,
+      () => {},
+      () => true,
+      mockTranslateBatch,
+    );
+    translator.start();
+    await translator.scan();
+
+    expect(root.querySelector('.card1')?.textContent).toBe('Xe máy địa hình 4 bánh');
+    // Failed card remains original
+    expect(root.querySelector('.card2')?.textContent).toBe('49cc汽油四轮摩托车');
+    // Third card succeeds
+    expect(root.querySelector('.card3')?.textContent).toBe('Xe điện tiêu chuẩn mới cho người lớn');
+    expect(translator.status().translated).toBe(2);
+
+    translator.stop();
+  });
+});

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { GLOSSARY, hasChinese, protectTokens } from '../lib/glossary';
+import { GLOSSARY, hasChinese, preservesFacts, protectTokens } from '../lib/glossary';
 
 describe('glossary module', () => {
   it('has essential shopping terms mapped accurately', () => {
@@ -20,6 +20,19 @@ describe('glossary module', () => {
     expect(hasChinese('Hello world')).toBe(false);
     expect(hasChinese('12345.67')).toBe(false);
     expect(hasChinese('₫ 38.500')).toBe(false);
+  });
+
+  describe('preservesFacts', () => {
+    it('handles case differences and spacing in product models and units', () => {
+      expect(preservesFacts('大公牛防震200CC自动挡沙', 'Xe cát số tự động 200cc giảm xóc Bull', 'zh-vi')).toBe(true);
+      expect(preservesFacts('49cc汽油四轮摩托车', 'Xe máy 4 bánh 49 cc chạy xăng', 'zh-vi')).toBe(true);
+      expect(preservesFacts('49cc汽油四轮摩托车', 'Xe máy 4 bánh 49 phân khối chạy xăng', 'zh-vi')).toBe(true);
+      expect(preservesFacts('60v5600w无刷电机', 'Động cơ không chổi than 60V 5600W', 'zh-vi')).toBe(true);
+      expect(preservesFacts('Valtinsu Em5-pro电动摩托车', 'Xe máy điện Valtinsu Em5 - pro', 'zh-vi')).toBe(true);
+      expect(preservesFacts('LC135260浮动盘', 'Đĩa phanh nổi lc135260', 'zh-vi')).toBe(true);
+      // Mismatched numbers must still fail
+      expect(preservesFacts('200CC摩托车', 'Xe máy 150cc', 'zh-vi')).toBe(false);
+    });
   });
 
   describe('protectTokens', () => {
@@ -44,6 +57,15 @@ describe('glossary module', () => {
       expect(restored).toContain('300');
       expect(restored).toContain('40');
       expect(restored).toContain('https://example.com/item');
+    });
+
+    it('handles casing and spacing differences in engine output for placeholders', () => {
+      const input = '49cc 摩托车 200CC';
+      const shield = protectTokens(input, 'zh-vi');
+      // Translation engine returned lowercase or spaced placeholders
+      const engineOutput = 'zxq0qxz zxq1qxz xe máy ZXQ 2 QXZ zxq 3 qxz';
+      const restored = shield.restore(engineOutput);
+      expect(restored).toBe('49 cc xe máy 200 CC');
     });
 
     it('protects SKU codes and quantities in vi-zh without breaking normal Vietnamese words', () => {

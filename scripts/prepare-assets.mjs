@@ -205,6 +205,23 @@ async function downloadTessdata() {
       throw err;
     }
   }
+
+  // Chinese product typography needs the higher-accuracy LSTM weights.
+  const bestDir = path.join(PUBLIC, 'vendor', 'tessdata-best');
+  ensureDir(bestDir);
+  for (const language of ['chi_sim', 'chi_tra']) {
+    const name = `${language}.traineddata.gz`;
+    const dest = path.join(bestDir, name);
+    if (fs.existsSync(dest) && fs.statSync(dest).size > 2000000) continue;
+    const url = `https://raw.githubusercontent.com/naptha/tessdata/gh-pages/4.0.0_best/${name}`;
+    console.log(`Downloading high-accuracy ${language}...`);
+    const response = await fetch(url, { signal: AbortSignal.timeout(60000) });
+    if (!response.ok) throw new Error(`OCR model download failed: ${response.status}`);
+    const buffer = Buffer.from(await response.arrayBuffer());
+    zlib.gunzipSync(buffer); // Never leave an HTML/error response disguised as a model.
+    fs.writeFileSync(dest, buffer);
+  }
+  fs.copyFileSync(path.join(tessdataDir, 'eng.traineddata.gz'), path.join(bestDir, 'eng.traineddata.gz'));
 }
 
 async function main() {
