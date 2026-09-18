@@ -35,11 +35,18 @@ export class PageTranslator {
           if (record && node.data === record.rendered) continue;
           if (record) { record.original = node.data; record.rendered = undefined; record.version++; record.failed = undefined; }
         }
+        if (mutation.type === 'attributes' && element && isExcluded(element)) continue;
         changed = true;
       }
       if (changed) { this.schedule(); this.onChange(); }
     });
-    this.observer.observe(this.root, { childList: true, subtree: true, characterData: true });
+    this.observer.observe(this.root, {
+      childList: true,
+      subtree: true,
+      characterData: true,
+      attributes: true,
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden'],
+    });
     this.schedule();
   }
   stop() {
@@ -66,10 +73,16 @@ export class PageTranslator {
     return text;
   }
   originalsUnder(element: Element): string | undefined {
+    if (!element.isConnected || element === this.root || element.childElementCount > 6) return;
     const parts: string[] = [];
-    for (const [node, record] of this.records) if (record.rendered && element.contains(node)) parts.push(record.original);
+    for (const [node, record] of this.records) {
+      if (node.isConnected && record.rendered && element.contains(node)) {
+        parts.push(record.original);
+        if (parts.length > 8) return;
+      }
+    }
     const text = parts.join(' ').trim();
-    return text && text.length < 1000 ? text : undefined;
+    return text && text.length <= 500 ? text : undefined;
   }
   status(): PageStatus {
     return { enabled: this.enabled, translated: this.translated, pending: [...this.records.values()].filter(r => r.pending).length, error: this.error };

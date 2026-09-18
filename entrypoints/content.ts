@@ -75,6 +75,15 @@ export default defineContentScript({
     ctx.addEventListener(window, 'scroll', () => { positionBadges(); translator.schedule(); }, { passive: true, capture: true });
     ctx.addEventListener(window, 'resize', () => { positionBadges(); translator.schedule(); });
     ctx.addEventListener(window, 'focus', () => void refresh(true));
+    let lastUrl = location.href;
+    const checkUrl = () => {
+      if (location.href !== lastUrl) {
+        lastUrl = location.href;
+        void refresh(true);
+      }
+    };
+    ctx.addEventListener(window, 'popstate', checkUrl);
+    ctx.addEventListener(window, 'hashchange', checkUrl);
 
     let tip: HTMLElement | undefined;
     ctx.addEventListener(document, 'pointerover', event => {

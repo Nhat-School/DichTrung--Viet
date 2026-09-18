@@ -28,6 +28,16 @@ export interface Crop {
   viewportWidth: number; viewportHeight: number;
 }
 export interface OcrResult { image: string; text: string; confidence: number; }
+export interface OcrState {
+  state: 'working' | 'done' | 'error';
+  progress?: number;
+  result?: OcrResult;
+  error?: string;
+  jobId?: string;
+  tabId?: number;
+  status?: string;
+  expires: number;
+}
 export interface PageStatus { enabled: boolean; translated: number; pending: number; error?: string; }
 export type EngineRequest =
   | { action: 'translate'; text: string; direction: Direction }

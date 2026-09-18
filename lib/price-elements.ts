@@ -10,7 +10,7 @@ export function findPriceElements(root: HTMLElement, site: Site, readText: (elem
   let node: Node | null;
   while ((node = walker.nextNode())) {
     const parent = node.parentElement;
-    if (!parent || isExcluded(parent) || !/[¥￥元]|RMB|CNY/.test(node.textContent || '')) continue;
+    if (!parent || isExcluded(parent) || (!/[¥￥元]|RMB|CNY/i.test(node.textContent || '') && !/[¥￥元]|RMB|CNY/i.test(readText(parent)))) continue;
     let element: Element | null = parent;
     for (let level = 0; element && element !== root && level < 4; level++, element = element.parentElement) {
       if (parsePrices(readText(element)).length) { candidates.add(element); break; }

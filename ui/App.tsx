@@ -60,8 +60,13 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     const tabsChanged = () => { void refreshTab().catch(() => {}); };
     chrome.tabs.onActivated.addListener(tabsChanged); chrome.tabs.onUpdated.addListener(tabsChanged);
     const storageChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === 'local' && changes.settings) { setSettings(changes.settings.newValue); setManualRate(changes.settings.newValue.manualRate); }
-      if (area === 'session' && changes.ocr && !popup) setOcr(changes.ocr.newValue || null);
+      if (area === 'local' && changes.settings) {
+        const next = changes.settings.newValue as Settings | undefined;
+        if (next) { setSettings(next); setManualRate(next.manualRate || ''); }
+      }
+      if (area === 'session' && changes.ocr && !popup) {
+        setOcr((changes.ocr.newValue as OcrState) || null);
+      }
     };
     chrome.storage.onChanged.addListener(storageChanged);
     return () => { chrome.tabs.onActivated.removeListener(tabsChanged); chrome.tabs.onUpdated.removeListener(tabsChanged); chrome.storage.onChanged.removeListener(storageChanged); };

@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { getSettings } from '../lib/storage';
 import { loadRate, validateManualRate } from '../lib/currency';
-import { AppError, errorMessage, siteFor, type EngineRequest, type Rate, type Reply, type Request, type Settings } from '../lib/types';
+import { AppError, errorMessage, siteFor, type EngineRequest, type OcrState, type Rate, type Reply, type Request, type Settings } from '../lib/types';
 
 export default defineBackground(() => {
   let offscreenCreating: Promise<void> | undefined;
@@ -43,7 +43,7 @@ export default defineBackground(() => {
     if (rateRequest) return rateRequest;
     rateRequest = (async () => {
       const settings = await getSettings();
-      const { rate: cached } = await chrome.storage.local.get('rate');
+      const { rate: cached } = (await chrome.storage.local.get('rate')) as { rate?: Rate };
       const rate = await loadRate({ cached, manualRate: settings.manualRate, force });
       if (rate?.source === 'Frankfurter') await chrome.storage.local.set({ rate });
       return rate;
@@ -153,8 +153,8 @@ export default defineBackground(() => {
         case 'capture': return capture((message as Extract<Request, { type: 'capture' }>).crop, sender);
         case 'get-ocr': {
           if (!extensionUI) throw new Error('Mở bảng công cụ để xem kết quả ảnh.');
-          const { ocr } = await chrome.storage.session.get('ocr');
-          if (ocr?.expires < Date.now()) { await chrome.storage.session.remove('ocr'); return null; }
+          const { ocr } = (await chrome.storage.session.get('ocr')) as { ocr?: OcrState };
+          if (ocr && ocr.expires < Date.now()) { await chrome.storage.session.remove('ocr'); return null; }
           return ocr || null;
         }
         case 'clear-ocr': case 'cancel-ocr': {
@@ -168,8 +168,8 @@ export default defineBackground(() => {
         }
         case 'ocr-progress': {
           if (sender.url !== chrome.runtime.getURL('offscreen.html') || job?.id !== message.jobId) return;
-          const { ocr } = await chrome.storage.session.get('ocr');
-          if (ocr?.jobId === message.jobId && ocr.state === 'working') await chrome.storage.session.set({ ocr: { ...ocr, progress: message.progress, status: (message as any).status } });
+          const { ocr } = (await chrome.storage.session.get('ocr')) as { ocr?: OcrState };
+          if (ocr && ocr.jobId === message.jobId && ocr.state === 'working') await chrome.storage.session.set({ ocr: { ...ocr, progress: message.progress, status: (message as any).status } });
           return;
         }
         default: throw new Error('Yêu cầu không được hỗ trợ.');
