@@ -2,7 +2,8 @@ import { createWorker, PSM, type Worker } from 'tesseract.js';
 import type { Crop, OcrLanguage, OcrLine, OcrResult } from './types';
 import { prepareOcrCanvases, mergeOcrLines } from './ocr-processing';
 
-export function cropBounds(crop: Crop, imageWidth: number, imageHeight: number) {
+export function cropBounds(crop: Crop | null | undefined, imageWidth: number, imageHeight: number) {
+  if (!crop) return { x: 0, y: 0, width: imageWidth, height: imageHeight };
   if (![crop.x, crop.y, crop.width, crop.height, crop.viewportWidth, crop.viewportHeight].every(Number.isFinite)
     || crop.viewportWidth <= 0 || crop.viewportHeight <= 0 || crop.width < 5 || crop.height < 5) {
     throw new Error('Vùng chọn quá nhỏ hoặc không hợp lệ. Hãy khoanh lại.');
@@ -35,7 +36,7 @@ export class OcrEngine {
     this.active = undefined;
     await (await task.worker).terminate();
   }
-  async recognize(image: string, crop: Crop, jobId: string, progress: (value: number, status: string) => void, language: OcrLanguage = 'chi_sim'): Promise<OcrResult> {
+  async recognize(image: string, crop: Crop | null, jobId: string, progress: (value: number, status: string) => void, language: OcrLanguage = 'chi_sim'): Promise<OcrResult> {
     if (this.active) await this.cancel(this.active.id);
     const img = await loadImageElement(image);
     const imgWidth = img.naturalWidth || img.width;

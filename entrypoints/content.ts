@@ -6,8 +6,16 @@ import { request } from '../lib/messages';
 import { isCommerceSite, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
 
 export default defineContentScript({
-  matches: ['*://*.taobao.com/*', '*://*.1688.com/*'],
+  matches: [
+    '*://*.taobao.com/*',
+    '*://*.tmall.com/*',
+    '*://*.1688.com/*',
+    '*://*.alibaba.com/*',
+    '*://*.aliapp.org/*',
+    '*://*.alipay.com/*',
+  ],
   runAt: 'document_idle',
+  allFrames: true,
   main(ctx) {
     const site = siteFor(location.href);
     if (!site || !document.body || document.querySelector('[data-tc-root]')) return;
@@ -25,6 +33,7 @@ export default defineContentScript({
     let settings: Settings | undefined;
     let priceTimer: ReturnType<typeof setTimeout> | undefined;
     let hoverTimer: ReturnType<typeof setTimeout> | undefined;
+    let captchaTimer: ReturnType<typeof setTimeout> | undefined;
     let captureCleanup: (() => void) | undefined;
     let lastError: string | undefined;
 
@@ -37,6 +46,7 @@ export default defineContentScript({
       renderedText: string;
     }
     const priceRecords = new Map<Element, PriceRecord>();
+    const processedCaptchaImages = new WeakSet<Element>();
 
     function toast(text: string) {
       shadow.querySelector('.toast')?.remove();
@@ -44,11 +54,61 @@ export default defineContentScript({
       node.onclick = () => node.remove(); shadow.append(node); setTimeout(() => node.remove(), 12000);
     }
 
+    async function scanCaptchaPrompt() {
+      const candidates = document.querySelectorAll<HTMLImageElement | HTMLCanvasElement>(
+        '[class*="captcha" i] img, [id*="captcha" i] img, .baxia-dialog img, [id*="baxia" i] img, .nc-container img, [id*="nc_" i] img, .ui-dialog img, [class*="captcha" i] canvas, .baxia-dialog canvas'
+      );
+      for (const el of candidates) {
+        if (processedCaptchaImages.has(el) || el.closest('[data-tc-owned]')) continue;
+        const rect = el.getBoundingClientRect();
+        const isBanner = rect.width >= 70 && rect.width <= 400 && rect.height >= 16 && rect.height <= 110 && (rect.width / (rect.height || 1) >= 1.3);
+        if (!isBanner) continue;
+        processedCaptchaImages.add(el);
+        try {
+          let dataUrl = '';
+          if (el instanceof HTMLImageElement && el.src) {
+            if (el.src.startsWith('data:image/')) {
+              dataUrl = el.src;
+            } else if (el.naturalWidth > 0) {
+              const canvas = document.createElement('canvas');
+              canvas.width = el.naturalWidth; canvas.height = el.naturalHeight;
+              const ctx2d = canvas.getContext('2d');
+              if (ctx2d) { ctx2d.drawImage(el, 0, 0); dataUrl = canvas.toDataURL('image/png'); }
+            }
+          } else if (el instanceof HTMLCanvasElement && el.width > 0) {
+            dataUrl = el.toDataURL('image/png');
+          }
+          if (dataUrl) {
+            const ocrRes = await request<{ text: string }>({ type: 'ocr-image', image: dataUrl }).catch(() => null);
+            if (ocrRes?.text?.trim()) {
+              const zh = ocrRes.text.trim().replace(/\s+/g, ' ');
+              const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
+              const parent = el.parentElement;
+              if (parent && !parent.querySelector('.tc-captcha-badge')) {
+                const badge = document.createElement('div');
+                badge.className = 'tc-captcha-badge';
+                badge.dataset.tcOwned = '';
+                badge.style.cssText = 'background:#102a26;color:#2be6ab;font:bold 13px/1.4 system-ui,sans-serif;padding:8px 12px;border-radius:8px;margin:6px 0;display:flex;align-items:center;gap:6px;box-shadow:0 3px 10px rgba(0,0,0,0.25);border:1px solid #23815e;z-index:2147483647;';
+                badge.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
+                parent.insertBefore(badge, el);
+              }
+            }
+          }
+        } catch {}
+      }
+    }
+
+    function scheduleCaptcha() {
+      clearTimeout(captchaTimer);
+      captchaTimer = setTimeout(() => void scanCaptchaPrompt(), 400);
+    }
+
     const translator = new PageTranslator(
-      document.body,
+      document.documentElement,
       text => request<string>({ type: 'translate', text, direction: 'zh-vi' }),
       () => {
         schedulePrices();
+        scheduleCaptcha();
         const error = translator.status().error;
         if (error && error !== lastError) { lastError = error; toast(`TranslateChina: ${error}`); }
       },
@@ -176,19 +236,20 @@ export default defineContentScript({
       } catch (error) { toast(String(error)); }
     }
 
-    ctx.addEventListener(window, 'scroll', () => { translator.schedule(); schedulePrices(); }, { passive: true, capture: true });
-    ctx.addEventListener(window, 'resize', () => { translator.schedule(); schedulePrices(); });
+    ctx.addEventListener(window, 'scroll', () => { translator.schedule(); schedulePrices(); scheduleCaptcha(); }, { passive: true, capture: true });
+    ctx.addEventListener(window, 'resize', () => { translator.schedule(); schedulePrices(); scheduleCaptcha(); });
     ctx.addEventListener(window, 'focus', () => void refresh(true));
 
     // Listen to hover over menus and interactive navigation
     ctx.addEventListener(document, 'mouseover', event => {
       const target = event.target as Element | null;
       if (!target || target.closest('[data-tc-owned]')) return;
-      if (target.closest('li, nav, menu, [class*="menu" i], [class*="nav" i], [class*="cate" i], [class*="hover" i], [class*="item" i], [role="menu"]')) {
+      if (target.closest('li, nav, menu, [class*="menu" i], [class*="nav" i], [class*="cate" i], [class*="hover" i], [class*="item" i], [role="menu"], [class*="captcha" i], .baxia-dialog')) {
         clearTimeout(hoverTimer);
         hoverTimer = setTimeout(() => {
           translator.schedule();
           schedulePrices();
+          scheduleCaptcha();
         }, 150);
       }
     }, { passive: true });
@@ -306,6 +367,7 @@ export default defineContentScript({
     chrome.runtime.onMessage.addListener(listener);
     ctx.onInvalidated(() => {
       captureCleanup?.();
+      clearTimeout(captchaTimer);
       clearTimeout(hoverTimer);
       clearTimeout(priceTimer);
       restorePrices();

@@ -1,6 +1,6 @@
 # TranslateChina 0.2 — Dịch Trung–Việt trên Chrome
 
-Extension miễn phí cho Chrome máy tính: dịch website tiếng Trung, hỗ trợ mua hàng Taobao/1688, quy đổi CNY → VNĐ và đọc chữ trong ảnh. Hoạt động trên thiết bị (on-device), không cần tài khoản hay API key.
+Extension miễn phí cho Chrome máy tính: dịch website tiếng Trung, đọc và duyệt web Taobao/1688, quy đổi CNY → VNĐ và đọc chữ trong ảnh. Global is the only one. Hoạt động trên thiết bị (on-device), không cần tài khoản hay API key.
 
 ## Cài hoặc cập nhật
 

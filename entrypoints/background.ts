@@ -276,6 +276,11 @@ export default defineBackground(() => {
           if (!extensionUI) throw new Error('Hủy từ bảng công cụ.');
           return cancelOcr();
         }
+        case 'ocr-image': {
+          const result = await offscreen({ action: 'ocr', image: (message as any).image, crop: null, jobId: crypto.randomUUID(), language: (message as any).language || 'chi_sim' });
+          if (result.ok) return result.data;
+          throw new Error(result.error);
+        }
         case 'get-page-status': {
           if (!extensionUI) throw new Error('Mở bảng công cụ để xem trạng thái.');
           try { return await chrome.tabs.sendMessage((message as any).tabId, { type: 'page-status' }); }

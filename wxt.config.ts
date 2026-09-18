@@ -9,7 +9,11 @@ export default defineConfig({
     permissions: ['storage', 'offscreen', 'sidePanel', 'activeTab', 'contextMenus', 'alarms', 'tabs', 'scripting'],
     host_permissions: [
       '*://*.taobao.com/*',
+      '*://*.tmall.com/*',
       '*://*.1688.com/*',
+      '*://*.alibaba.com/*',
+      '*://*.aliapp.org/*',
+      '*://*.alipay.com/*',
       'https://api.frankfurter.dev/*',
       'https://translate.googleapis.com/*',
     ],

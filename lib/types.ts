@@ -46,7 +46,7 @@ export type EngineRequest =
   | { action: 'translate'; text: string; direction: Direction }
   | { action: 'translate-batch'; texts: string[]; direction: Direction }
   | { action: 'status' }
-  | { action: 'ocr'; image: string; crop: Crop; jobId: string; language?: OcrLanguage }
+  | { action: 'ocr'; image: string; crop: Crop | null; jobId: string; language?: OcrLanguage }
   | { action: 'cancel-ocr'; jobId: string };
 export type Request =
   | { type: 'translate'; text: string; direction: Direction }
@@ -59,6 +59,7 @@ export type Request =
   | { type: 'visible-engine'; ready: boolean }
   | { type: 'start-capture'; mode: 'region' | 'image'; tabId: number }
   | { type: 'capture'; crop: Crop }
+  | { type: 'ocr-image'; image: string; language?: OcrLanguage }
   | { type: 'cancel-ocr' }
   | { type: 'get-ocr' }
   | { type: 'clear-ocr' }
@@ -72,8 +73,8 @@ export function siteFor(url: string): Site | undefined {
   try {
     const { hostname, protocol } = new URL(url);
     if (protocol !== 'https:' && protocol !== 'http:') return;
-    if (hostname === 'taobao.com' || hostname.endsWith('.taobao.com')) return 'taobao';
-    if (hostname === '1688.com' || hostname.endsWith('.1688.com')) return '1688';
+    if (hostname === 'taobao.com' || hostname.endsWith('.taobao.com') || hostname === 'tmall.com' || hostname.endsWith('.tmall.com')) return 'taobao';
+    if (hostname === '1688.com' || hostname.endsWith('.1688.com') || hostname === 'alibaba.com' || hostname.endsWith('.alibaba.com') || hostname.endsWith('.aliapp.org') || hostname.endsWith('.alipay.com')) return '1688';
     return `${protocol}//${hostname}` as Site;
   } catch { /* Unsupported URL. */ }
 }
