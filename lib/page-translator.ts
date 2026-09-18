@@ -20,8 +20,9 @@ export class PageTranslator {
     private onChange: () => void = () => {},
     private visible: (element: Element) => boolean = element => {
       const rect = element.getBoundingClientRect();
-      return rect.width > 0 && rect.height > 0 && rect.bottom >= -200 && rect.top <= innerHeight + 600;
+      return rect.width > 0 && rect.height > 0 && rect.bottom >= -300 && rect.top <= innerHeight + 1000;
     },
+    private translateBatch?: (texts: string[]) => Promise<string[]>,
   ) {}
   start() {
     if (this.enabled) return;
@@ -100,8 +101,52 @@ export class PageTranslator {
   schedule = () => {
     if (!this.enabled) return;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.scan(), 180);
+    this.timer = setTimeout(() => void this.scan(), 120);
   };
+
+  async translateNodes(nodes: Text[]) {
+    if (!this.enabled || !nodes.length) return;
+    const generation = this.generation;
+    const valid: { node: Text; original: string; version: number }[] = [];
+    for (const node of nodes) {
+      if (!node.isConnected || !node.parentElement || isExcluded(node.parentElement)) continue;
+      let record = this.records.get(node);
+      if (!record) { record = { original: node.data, version: 0, pending: false }; this.records.set(node, record); }
+      if (node.data !== record.rendered && node.data !== record.original) { record.original = node.data; record.version++; }
+      const original = record.original, version = record.version;
+      if (hasChinese(original) && !record.pending) {
+        record.pending = true;
+        valid.push({ node, original, version });
+      }
+    }
+    if (!valid.length) return;
+    try {
+      const texts = valid.map(v => v.original);
+      const translated = this.translateBatch
+        ? await this.translateBatch(texts)
+        : await Promise.all(texts.map(t => this.translate(t)));
+      for (let i = 0; i < valid.length; i++) {
+        const { node, original, version } = valid[i];
+        const res = translated[i];
+        const record = this.records.get(node);
+        if (record) record.pending = false;
+        if (this.enabled && this.generation === generation && node.isConnected && node.data === original && record && record.version === version && res) {
+          record.rendered = res;
+          node.data = res;
+          this.translated++;
+        }
+      }
+    } catch (error) {
+      for (const { node, original } of valid) {
+        const record = this.records.get(node);
+        if (record) { record.pending = false; record.failed = original; }
+      }
+      this.error = error instanceof Error ? error.message : String(error);
+    } finally {
+      this.onChange();
+    }
+  }
+
   async scan() {
     if (!this.enabled || this.running) return;
     this.running = true;
@@ -119,32 +164,14 @@ export class PageTranslator {
         },
       });
       const batch: Text[] = [];
-      while (batch.length < 40) { const node = walker.nextNode(); if (!node) break; batch.push(node as Text); }
-      for (const node of batch) {
-        if (!this.enabled || this.generation !== generation) break;
-        if (!node.isConnected || !node.parentElement || isExcluded(node.parentElement)) continue;
-        let record = this.records.get(node);
-        if (!record) { record = { original: node.data, version: 0, pending: false }; this.records.set(node, record); }
-        if (node.data !== record.rendered && node.data !== record.original) { record.original = node.data; record.version++; }
-        const original = record.original, version = record.version;
-        record.pending = true;
-        try {
-          const result = await this.translate(original);
-          if (this.enabled && this.generation === generation && node.isConnected && node.data === original && record.version === version) {
-            record.rendered = result; node.data = result; this.translated++;
-          }
-        } catch (error) {
-          record.failed = original;
-          this.error = error instanceof Error ? error.message : String(error);
-          // Setup failures affect every string. Avoid hammering the model until retry.
-          if ((error as { code?: string })?.code && ['NEED_SETUP', 'UNSUPPORTED', 'NEED_VISIBLE'].includes((error as { code: string }).code)) {
-            break;
-          }
-        } finally { record.pending = false; }
+      while (batch.length < 60) { const node = walker.nextNode(); if (!node) break; batch.push(node as Text); }
+      if (batch.length) {
+        await this.translateNodes(batch);
       }
 
       // Translate Chinese placeholders on inputs/textareas and title attributes
       const attrElements = this.root.querySelectorAll<HTMLElement>('input[placeholder], textarea[placeholder], [title]');
+      const pendingAttrs: { el: HTMLElement; attr: string; val: string }[] = [];
       for (const el of attrElements) {
         if (!this.enabled || this.generation !== generation) break;
         if (!el.isConnected || el.closest('[data-tc-owned]')) continue;
@@ -158,21 +185,36 @@ export class PageTranslator {
         }
         if (record.rendered || record.pending || record.failed === val) continue;
         record.pending = true;
+        pendingAttrs.push({ el, attr, val });
+      }
+
+      if (pendingAttrs.length) {
         try {
-          const result = await this.translate(record.original);
-          if (this.enabled && this.generation === generation && el.isConnected) {
-            record.rendered = result;
-            el.setAttribute(attr, result);
-            this.translated++;
+          const texts = pendingAttrs.map(p => p.val);
+          const translated = this.translateBatch
+            ? await this.translateBatch(texts)
+            : await Promise.all(texts.map(t => this.translate(t)));
+          for (let i = 0; i < pendingAttrs.length; i++) {
+            const { el, attr } = pendingAttrs[i];
+            const res = translated[i];
+            const record = this.attrRecords.get(el);
+            if (record) record.pending = false;
+            if (this.enabled && this.generation === generation && el.isConnected && record && res) {
+              record.rendered = res;
+              el.setAttribute(attr, res);
+              this.translated++;
+            }
           }
         } catch {
-          record.failed = val;
-        } finally {
-          record.pending = false;
+          for (const { el } of pendingAttrs) {
+            const record = this.attrRecords.get(el);
+            if (record) record.pending = false;
+          }
         }
       }
 
-      if (batch.length === 40 && !this.error) this.schedule();
+      // If batch had items, schedule next batch to finish the rest of the page
+      if (batch.length > 0 && !this.error) this.schedule();
     } finally {
       this.running = false;
       this.onChange();

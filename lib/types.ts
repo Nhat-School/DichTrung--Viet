@@ -41,11 +41,13 @@ export interface OcrState {
 export interface PageStatus { enabled: boolean; translated: number; pending: number; error?: string; }
 export type EngineRequest =
   | { action: 'translate'; text: string; direction: Direction }
+  | { action: 'translate-batch'; texts: string[]; direction: Direction }
   | { action: 'status' }
   | { action: 'ocr'; image: string; crop: Crop; jobId: string }
   | { action: 'cancel-ocr'; jobId: string };
 export type Request =
   | { type: 'translate'; text: string; direction: Direction }
+  | { type: 'translate-batch'; texts: string[]; direction: Direction }
   | { type: 'get-state' }
   | { type: 'set-settings'; settings: Partial<Settings> }
   | { type: 'get-rate'; force?: boolean }

@@ -110,11 +110,13 @@ describe('prices module', () => {
     it('formats single price into Vietnamese Dong', () => {
       const single = { raw: '¥100', amounts: ['100'] };
       expect(formatPrice(single, rate)).toBe('≈ 385.000 ₫');
+      expect(formatPrice(single, rate, true)).toBe('385.000 ₫');
     });
 
     it('formats price range into Vietnamese Dong range', () => {
       const range = { raw: '¥10-20', amounts: ['10', '20'] };
       expect(formatPrice(range, rate)).toBe('≈ 38.500 ₫ – 77.000 ₫');
+      expect(formatPrice(range, rate, true)).toBe('38.500 ₫ – 77.000 ₫');
     });
   });
 });

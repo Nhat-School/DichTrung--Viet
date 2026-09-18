@@ -126,7 +126,7 @@ export class TranslationEngine {
     const existing = this.pending.get(key);
     if (existing) return existing;
 
-    const task = this.tail.catch(() => {}).then(async () => {
+    const task = (async () => {
       const shield = protectTokens(text, direction);
       const api = this.api();
 
@@ -134,7 +134,8 @@ export class TranslationEngine {
       if (api) {
         try {
           const model = await this.initialize(direction);
-          translated = await model.translate(shield.text);
+          const res = await (this.tail = this.tail.catch(() => {}).then(() => model.translate(shield.text)));
+          translated = res as string;
         } catch {
           // Native translation failed, try fallback
         }
@@ -146,16 +147,78 @@ export class TranslationEngine {
 
       const restored = shield.restore(translated);
       this.cache.set(key, restored);
-      if (this.cache.size > 2000) this.cache.delete(this.cache.keys().next().value!);
+      if (this.cache.size > 3000) this.cache.delete(this.cache.keys().next().value!);
       return restored;
-    });
+    })();
 
-    this.tail = task;
     this.pending.set(key, task);
     try {
       return await task;
     } finally {
       this.pending.delete(key);
     }
+  }
+
+  async translateBatch(texts: string[], direction: Direction): Promise<string[]> {
+    if (!texts.length) return [];
+    const results: (string | undefined)[] = new Array(texts.length);
+    const uncachedIndices: number[] = [];
+
+    // 1. Resolve glossary and cache
+    for (let i = 0; i < texts.length; i++) {
+      const t = texts[i];
+      if (!t || !t.trim()) { results[i] = t; continue; }
+      const direct = direction === 'zh-vi' ? GLOSSARY[t.trim()] : undefined;
+      if (direct) { results[i] = t.replace(t.trim(), direct); continue; }
+      const key = `${direction}:${t}`;
+      const cached = this.cache.get(key);
+      if (cached) { results[i] = cached; continue; }
+      uncachedIndices.push(i);
+    }
+
+    if (!uncachedIndices.length) return results as string[];
+
+    // 2. For remaining uncached items, group into chunks of up to 25 lines
+    const CHUNK_SIZE = 25;
+    for (let c = 0; c < uncachedIndices.length; c += CHUNK_SIZE) {
+      const slice = uncachedIndices.slice(c, c + CHUNK_SIZE);
+      const sliceTexts = slice.map(idx => texts[idx]);
+
+      const hasInternalNewline = sliceTexts.some(txt => txt.includes('\n'));
+      if (hasInternalNewline || sliceTexts.length === 1) {
+        const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
+        slice.forEach((idx, sIdx) => {
+          const res = parallel[sIdx];
+          results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
+        });
+      } else {
+        try {
+          const combined = sliceTexts.join('\n');
+          const translated = await this.translate(combined, direction);
+          const lines = translated.split('\n');
+          if (lines.length === sliceTexts.length) {
+            slice.forEach((idx, sIdx) => {
+              const res = lines[sIdx].trim();
+              results[idx] = res;
+              this.cache.set(`${direction}:${texts[idx]}`, res);
+            });
+          } else {
+            const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
+            slice.forEach((idx, sIdx) => {
+              const res = parallel[sIdx];
+              results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
+            });
+          }
+        } catch {
+          const parallel = await Promise.allSettled(sliceTexts.map(txt => this.translate(txt, direction)));
+          slice.forEach((idx, sIdx) => {
+            const res = parallel[sIdx];
+            results[idx] = res.status === 'fulfilled' ? res.value : texts[idx];
+          });
+        }
+      }
+    }
+
+    return results.map((r, i) => r ?? texts[i]);
   }
 }

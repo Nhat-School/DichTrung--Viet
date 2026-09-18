@@ -10,6 +10,7 @@ chrome.runtime.onMessage.addListener((message, _sender, respond) => {
     switch (request.action) {
       case 'status': return translator.status();
       case 'translate': return translator.translate(request.text, request.direction);
+      case 'translate-batch': return translator.translateBatch(request.texts, request.direction);
       case 'cancel-ocr': return ocr.cancel(request.jobId);
       case 'ocr': return ocr.recognize(request.image, request.crop, request.jobId, (progress, status) => {
         void chrome.runtime.sendMessage({ type: 'ocr-progress', jobId: request.jobId, progress, status }).catch(() => {});

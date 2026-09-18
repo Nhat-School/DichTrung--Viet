@@ -19,6 +19,7 @@ export function parsePrices(text: string, allowBare = false): Price[] {
       new Decimal(match[0].replace(/[,万]/g, '')).mul(match[0].endsWith('万') ? 10000 : 1).toString()),
   })).filter(price => price.amounts.length > 0 && price.amounts.every(value => new Decimal(value).lte(1e12)));
 }
-export function formatPrice(price: Price, rate: string) {
-  return '≈ ' + price.amounts.map(amount => convert(amount, rate)).join(' – ');
+export function formatPrice(price: Price, rate: string, inPlace = false) {
+  const converted = price.amounts.map(amount => convert(amount, rate)).join(' – ');
+  return inPlace ? converted : '≈ ' + converted;
 }

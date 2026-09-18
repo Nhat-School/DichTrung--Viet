@@ -76,6 +76,13 @@ export default defineBackground(() => {
     }
     throw new AppError(result.code || 'ERROR', result.error);
   }
+  async function translateBatch(texts: string[], direction: 'zh-vi' | 'vi-zh') {
+    if (!Array.isArray(texts) || !['zh-vi', 'vi-zh'].includes(direction)) throw new Error('Yêu cầu dịch không hợp lệ.');
+    if (!texts.length) return [];
+    const result = await offscreen({ action: 'translate-batch', texts, direction });
+    if (result.ok) return result.data;
+    return Promise.all(texts.map(t => translate(t, direction)));
+  }
   async function getRate(force = false) {
     if (rateRequest) return rateRequest;
     rateRequest = (async () => {
@@ -154,6 +161,7 @@ export default defineBackground(() => {
     (async () => {
       switch (message.type as string) {
         case 'translate': return translate((message as any).text, (message as any).direction);
+        case 'translate-batch': return translateBatch((message as any).texts, (message as any).direction);
         case 'get-state': return { settings: await getSettings(), rate: await getRate() };
         case 'get-rate': {
           const rate = await getRate((message as any).force === true);
