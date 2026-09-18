@@ -259,7 +259,23 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
 
       {(popup || tab === 'page') && <>
         <section className="site-card"><div className="row"><div><span className="eyebrow">TRANG ĐANG XEM</span><h2>{site ? site === 'taobao' ? 'Taobao' : site === '1688' ? '1688' : new URL(site).hostname : 'Mở một website'}</h2></div>{site && <label className="switch"><input type="checkbox" aria-label={`Tự dịch ${site}`} checked={!!settings.enabled[site]} onChange={event => { if (event.target.checked && !isCommerceSite(site)) enableSite(); else void updateSettings({ enabled: { ...settings.enabled, [site]: event.target.checked } }); }} /><span /></label>}</div><p className="muted">{site ? settings.enabled[site] ? isCommerceSite(site) ? 'Dịch sang tiếng Việt và hiển thị giá VNĐ.' : 'Tự dịch chữ tiếng Trung trên website này.' : 'Đang xem bản gốc. Bật lại khi cần dịch.' : 'Mở website HTTP/HTTPS cần dịch rồi bấm biểu tượng extension.'}</p>
-          {pageStatus?.error && <p className="warning">{pageStatus.error}</p>}
+          {pageStatus?.error && (
+            <div className="warning">
+              <div>{pageStatus.error}</div>
+              {pageStatus.error.includes('Thiết lập') && (
+                <div style={{ marginTop: '8px', display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+                  <button type="button" className="secondary compact" onClick={() => setTab('settings')}>
+                    Mở Thiết lập ⚙️
+                  </button>
+                  {!settings.onlineFallback && (
+                    <button type="button" className="secondary compact" onClick={() => setOnlineFallback(true)}>
+                      🌐 Bật Google Dịch dự phòng
+                    </button>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {site && pageStatus && <div className="status-line"><i />{pageStatus.translated} đoạn đã dịch {pageStatus.pending > 0 ? '· Đang xử lý…' : ''}</div>}
           {site && !isCommerceSite(site) && !settings.enabled[site] && <button className="primary full" onClick={enableSite}>Cho phép dịch website này</button>}
           {site && settings.enabled[site] && !pageStatus && <p className="warning">Tải lại trang mua hàng sau khi cài hoặc cập nhật extension.</p>}
