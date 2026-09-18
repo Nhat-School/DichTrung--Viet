@@ -11,6 +11,7 @@ export default defineConfig({
       '*://*.taobao.com/*',
       '*://*.1688.com/*',
       'https://api.frankfurter.dev/*',
+      'https://translate.googleapis.com/*',
     ],
     optional_host_permissions: ['http://*/*', 'https://*/*'],
     content_security_policy: {

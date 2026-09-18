@@ -140,11 +140,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
     }).catch(e => setError(errorMessage(e)));
   }
   function setOnlineFallback(enabled: boolean) {
-    if (!enabled) { void updateSettings({ onlineFallback: false }); return; }
-    void chrome.permissions.request({ origins: ['https://translate.googleapis.com/*'] }).then(granted => {
-      if (granted) return updateSettings({ onlineFallback: true });
-      setNotice('Chưa cấp quyền. Vẫn chỉ dịch trên máy.');
-    }).catch(e => setError(errorMessage(e)));
+    void updateSettings({ onlineFallback: enabled });
   }
   async function refreshRate() {
     setRefreshing(true); setError('');
