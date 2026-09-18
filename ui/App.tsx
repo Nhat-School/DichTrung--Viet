@@ -26,15 +26,42 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
   const [manualRate, setManualRate] = useState('');
   const [initializing, setInitializing] = useState<Direction>();
   const [download, setDownload] = useState(0);
-  const [input, setInput] = useState('');
-  const [output, setOutput] = useState('');
-  const [writing, setWriting] = useState(false);
   const [purpose, setPurpose] = useState<'search' | 'message'>('search');
+  const [searchInput, setSearchInput] = useState(() => {
+    try { return sessionStorage.getItem('tc_search_input') || ''; } catch { return ''; }
+  });
+  const [searchOutput, setSearchOutput] = useState(() => {
+    try { return sessionStorage.getItem('tc_search_output') || ''; } catch { return ''; }
+  });
+  const [searchWriting, setSearchWriting] = useState(false);
+  const searchGeneration = useRef(0);
+
+  const [messageInput, setMessageInput] = useState(() => {
+    try { return sessionStorage.getItem('tc_message_input') || ''; } catch { return ''; }
+  });
+  const [messageOutput, setMessageOutput] = useState(() => {
+    try { return sessionStorage.getItem('tc_message_output') || ''; } catch { return ''; }
+  });
+  const [messageWriting, setMessageWriting] = useState(false);
+  const messageGeneration = useRef(0);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tc_search_input', searchInput);
+      sessionStorage.setItem('tc_search_output', searchOutput);
+    } catch {}
+  }, [searchInput, searchOutput]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.setItem('tc_message_input', messageInput);
+      sessionStorage.setItem('tc_message_output', messageOutput);
+    } catch {}
+  }, [messageInput, messageOutput]);
   const [ocr, setOcr] = useState<OcrState | null>(null);
   const [ocrText, setOcrText] = useState('');
   const [ocrTranslation, setOcrTranslation] = useState('');
   const [ocrTranslating, setOcrTranslating] = useState(false);
-  const writingGeneration = useRef(0);
   const ocrGeneration = useRef(0);
   const engine = useMemo(() => new TranslationEngine(), []);
   const site = active?.url ? siteFor(active.url) : undefined;
@@ -124,14 +151,58 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
       setStatuses(await engine.status()); setNotice('Bộ dịch đã sẵn sàng. Quay lại trang mua hàng hoặc tải lại trang.');
     }).catch(e => setError(errorMessage(e))).finally(() => setInitializing(undefined));
   }
-  async function translateInput() {
-    if (!input.trim()) return;
-    const generation = ++writingGeneration.current;
-    setWriting(true); setOutput(''); setError('');
-    try { const result = await request<string>({ type: 'translate', text: input, direction: 'vi-zh' }); if (generation === writingGeneration.current) setOutput(result); }
-    catch (e) { if (generation === writingGeneration.current) setError(errorMessage(e)); }
-    finally { if (generation === writingGeneration.current) setWriting(false); }
+  async function translateSearch(customText?: string) {
+    const text = (customText !== undefined ? customText : searchInput).trim();
+    if (!text) return;
+    const generation = ++searchGeneration.current;
+    setSearchWriting(true); setSearchOutput(''); setError('');
+    try {
+      const result = await request<string>({ type: 'translate', text, direction: 'vi-zh' });
+      if (generation === searchGeneration.current) setSearchOutput(result);
+    } catch (e) {
+      if (generation === searchGeneration.current) setError(errorMessage(e));
+    } finally {
+      if (generation === searchGeneration.current) setSearchWriting(false);
+    }
   }
+
+  async function translateMessage(customText?: string) {
+    const text = (customText !== undefined ? customText : messageInput).trim();
+    if (!text) return;
+    const generation = ++messageGeneration.current;
+    setMessageWriting(true); setMessageOutput(''); setError('');
+    try {
+      const result = await request<string>({ type: 'translate', text, direction: 'vi-zh' });
+      if (generation === messageGeneration.current) setMessageOutput(result);
+    } catch (e) {
+      if (generation === messageGeneration.current) setError(errorMessage(e));
+    } finally {
+      if (generation === messageGeneration.current) setMessageWriting(false);
+    }
+  }
+
+  const SELLER_TEMPLATES = [
+    { label: '📦 Còn hàng không?', text: 'Xin chào, sản phẩm này còn hàng sẵn không?' },
+    { label: '🚚 Khi nào giao hàng?', text: 'Xin chào, sau khi đặt đơn thì bao lâu shop có thể giao hàng?' },
+    { label: '💰 Mua nhiều có giảm giá?', text: 'Tôi muốn mua số lượng nhiều, shop có thể chiết khấu thêm không?' },
+    { label: '🏷️ Có hỗ trợ freeship?', text: 'Đơn hàng này có được hỗ trợ phí vận chuyển (freeship) không?' },
+    { label: '📏 Tư vấn chọn size', text: 'Tôi cao 1m65, nặng 55kg thì nên chọn size nào vừa vặn?' },
+    { label: '📸 Cho xem ảnh thật', text: 'Shop có thể gửi thêm ảnh chụp thật của sản phẩm được không?' },
+    { label: '🧪 Muốn mua mẫu thử', text: 'Tôi muốn đặt mua mẫu thử 1 chiếc trước có được không?' },
+    { label: '⏱️ Đang cần gấp', text: 'Đơn này tôi đang cần gấp, shop vui lòng ưu tiên đóng gói và gửi sớm giúp tôi nhé.' },
+  ];
+
+  const SEARCH_SUGGESTIONS = [
+    'Áo thun nữ dáng rộng',
+    'Giày thể thao trắng',
+    'Túi xách đeo chéo nữ',
+    'Ốp lưng điện thoại',
+    'Đồ gia dụng thông minh',
+    'Váy đầm dự tiệc',
+    'Quần jean ống suông',
+    'Bình giữ nhiệt inox',
+  ];
+
   async function translateOcr() {
     const generation = ++ocrGeneration.current;
     setOcrTranslating(true); setError(''); setOcrTranslation('');
@@ -196,12 +267,124 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
 
       {!popup && tab === 'write' && <>
         <div className="section-heading"><h2>Viết bằng tiếng Việt</h2><span className="pill">Việt → Trung</span></div>
-        <div className="segmented"><button className={purpose === 'search' ? 'active' : ''} onClick={() => setPurpose('search')}>Tìm hàng</button><button className={purpose === 'message' ? 'active' : ''} onClick={() => setPurpose('message')}>Nhắn người bán</button></div>
-        <p className="muted">{purpose === 'search' ? 'Mô tả món hàng bạn muốn tìm. Sao chép bản dịch vào ô tìm kiếm của website.' : 'Soạn lời nhắn, kiểm tra bản dịch rồi tự gửi cho người bán.'}</p>
-        <label className="field">Nội dung tiếng Việt<textarea maxLength={6000} value={input} onChange={e => { writingGeneration.current++; setWriting(false); setInput(e.target.value); setOutput(''); }} placeholder={purpose === 'search' ? 'Ví dụ: áo sơ mi nữ vải cotton màu trắng' : 'Ví dụ: Sản phẩm này còn hàng không? Tôi muốn mua 20 chiếc.'} rows={6} /></label>
-        <div className="counter">{input.length.toLocaleString('vi-VN')} / 6.000</div>
-        <button className="primary full" onClick={translateInput} disabled={!input.trim() || writing}>{writing ? 'Đang dịch…' : 'Dịch sang tiếng Trung'}</button>
-        {output && <div className="translation-result"><div className="row"><span className="eyebrow">TIẾNG TRUNG</span><button className="text-button" onClick={() => void copy(output)}>Sao chép</button></div><p lang="zh">{output}</p></div>}
+        <div className="segmented">
+          <button className={purpose === 'search' ? 'active' : ''} onClick={() => setPurpose('search')}>
+            🔍 Tìm hàng {searchInput.trim() ? '•' : ''}
+          </button>
+          <button className={purpose === 'message' ? 'active' : ''} onClick={() => setPurpose('message')}>
+            💬 Nhắn người bán {messageInput.trim() ? '•' : ''}
+          </button>
+        </div>
+
+        {purpose === 'search' && <>
+          <p className="muted">Mô tả sản phẩm bạn muốn tìm. Ô này lưu riêng từ khóa tìm kiếm để không bị lẫn với tin nhắn shop.</p>
+          <div className="quick-group">
+            <span className="eyebrow">TỪ KHÓA GỢI Ý MẪU</span>
+            <div className="quick-templates">
+              {SEARCH_SUGGESTIONS.map(item => (
+                <button
+                  key={item}
+                  type="button"
+                  className="quick-chip"
+                  onClick={() => {
+                    setSearchInput(item);
+                    void translateSearch(item);
+                  }}
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="field">
+            Từ khóa sản phẩm (Tiếng Việt)
+            <textarea
+              maxLength={6000}
+              value={searchInput}
+              onChange={e => {
+                searchGeneration.current++;
+                setSearchWriting(false);
+                setSearchInput(e.target.value);
+                setSearchOutput('');
+              }}
+              placeholder="Ví dụ: áo sơ mi nữ vải cotton màu trắng, ốp điện thoại iphone 15..."
+              rows={5}
+            />
+          </label>
+          <div className="counter">{searchInput.length.toLocaleString('vi-VN')} / 6.000</div>
+          <button
+            className="primary full"
+            onClick={() => void translateSearch()}
+            disabled={!searchInput.trim() || searchWriting}
+          >
+            {searchWriting ? 'Đang dịch…' : '🔍 Dịch từ khóa tìm kiếm'}
+          </button>
+          {searchOutput && (
+            <div className="translation-result">
+              <div className="row">
+                <span className="eyebrow">TỪ KHÓA TÌM KIẾM (TIẾNG TRUNG)</span>
+                <button className="text-button" onClick={() => void copy(searchOutput)}>Sao chép</button>
+              </div>
+              <p lang="zh">{searchOutput}</p>
+              <div className="result-tip">💡 Mẹo: Dán trực tiếp vào ô tìm kiếm trên Taobao hoặc 1688 để tìm nguồn hàng gốc.</div>
+            </div>
+          )}
+        </>}
+
+        {purpose === 'message' && <>
+          <p className="muted">Soạn câu hỏi hoặc lời nhắn gửi cho shop. Ô này lưu riêng tin nhắn trao đổi, độc lập với từ khóa tìm kiếm.</p>
+          <div className="quick-group">
+            <span className="eyebrow">MẪU CÂU HỎI SHOP THÔNG DỤNG (BẤM ĐỂ DỊCH NHANH)</span>
+            <div className="quick-templates">
+              {SELLER_TEMPLATES.map(item => (
+                <button
+                  key={item.label}
+                  type="button"
+                  className="quick-chip"
+                  onClick={() => {
+                    setMessageInput(item.text);
+                    void translateMessage(item.text);
+                  }}
+                >
+                  {item.label}
+                </button>
+              ))}
+            </div>
+          </div>
+          <label className="field">
+            Nội dung nhắn cho shop (Tiếng Việt)
+            <textarea
+              maxLength={6000}
+              value={messageInput}
+              onChange={e => {
+                messageGeneration.current++;
+                setMessageWriting(false);
+                setMessageInput(e.target.value);
+                setMessageOutput('');
+              }}
+              placeholder="Ví dụ: Xin chào, sản phẩm này còn hàng không? Tôi muốn mua 20 chiếc..."
+              rows={5}
+            />
+          </label>
+          <div className="counter">{messageInput.length.toLocaleString('vi-VN')} / 6.000</div>
+          <button
+            className="primary full"
+            onClick={() => void translateMessage()}
+            disabled={!messageInput.trim() || messageWriting}
+          >
+            {messageWriting ? 'Đang dịch…' : '💬 Dịch lời nhắn cho shop'}
+          </button>
+          {messageOutput && (
+            <div className="translation-result">
+              <div className="row">
+                <span className="eyebrow">LỜI NHẮN GỬI SHOP (TIẾNG TRUNG)</span>
+                <button className="text-button" onClick={() => void copy(messageOutput)}>Sao chép</button>
+              </div>
+              <p lang="zh">{messageOutput}</p>
+              <div className="result-tip">💡 Mẹo: Mở ô chat AliWangWang (旺旺) trên Taobao/1688 rồi dán câu này để nhắn trực tiếp cho shop.</div>
+            </div>
+          )}
+        </>}
       </>}
 
       {!popup && tab === 'settings' && <>
