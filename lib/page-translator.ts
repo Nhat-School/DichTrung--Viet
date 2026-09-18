@@ -5,6 +5,12 @@ import { splitText } from './text-chunks';
 
 interface RecordState { original: string; rendered?: string; version: number; pending: boolean; failed?: string; }
 interface AttrRecordState { attr: string; original: string; rendered?: string; pending: boolean; failed?: string; }
+function isPriceNode(node: Text, parent: HTMLElement | null): boolean {
+  if (!parent) return false;
+  if (parent.closest('[data-tc-owned], [data-tc-price], [class*="price" i], [class*="Price"], [class*="cost" i], [data-price], [itemprop="price"]')) return true;
+  return /[¥￥元]|RMB|CNY/i.test(node.data) || /^\s*\d+(?:\.\d+)?\s*(?:起|起批|件起批)/.test(node.data);
+}
+
 export class PageTranslator {
   private records = new Map<Text, RecordState>();
   private attrRecords = new Map<Element, Map<string, AttrRecordState>>();
@@ -117,7 +123,7 @@ export class PageTranslator {
     const generation = this.generation;
     const valid: { node: Text; original: string; version: number }[] = [];
     for (const node of nodes) {
-      if (!node.isConnected || !node.parentElement || isExcluded(node.parentElement)) continue;
+      if (!node.isConnected || !node.parentElement || isExcluded(node.parentElement) || isPriceNode(node, node.parentElement)) continue;
       let record = this.records.get(node);
       if (!record) { record = { original: node.data, version: 0, pending: false }; this.records.set(node, record); }
       if (node.data !== record.rendered && node.data !== record.original) { record.original = node.data; record.version++; }
@@ -185,7 +191,7 @@ export class PageTranslator {
       const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT, {
         acceptNode: node => {
           const parent = node.parentElement;
-          if (!parent || isExcluded(parent) || !this.visible(parent)) return NodeFilter.FILTER_REJECT;
+          if (!parent || isExcluded(parent) || !this.visible(parent) || isPriceNode(node as Text, parent)) return NodeFilter.FILTER_REJECT;
           const record = this.records.get(node as Text);
           if (record?.rendered === (node as Text).data || record?.failed === (node as Text).data || record?.pending) return NodeFilter.FILTER_REJECT;
           return hasChinese((node as Text).data) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;

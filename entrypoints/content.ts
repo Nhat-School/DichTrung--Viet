@@ -1,7 +1,7 @@
 import { defineContentScript } from 'wxt/utils/define-content-script';
 import { PageTranslator } from '../lib/page-translator';
 import { findPriceElements } from '../lib/price-elements';
-import { formatPrice, type Price } from '../lib/prices';
+import { formatPrice, parsePrices, type Price } from '../lib/prices';
 import { request } from '../lib/messages';
 import { isCommerceSite, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
 
@@ -116,6 +116,22 @@ export default defineContentScript({
       texts => request<string[]>({ type: 'translate-batch', texts, direction: 'zh-vi' }),
     );
 
+    function translatePriceSuffixes(text: string): string {
+      return text
+        .replace(/(\d+)\s*件起批/g, ' ($1 chiếc sỉ)')
+        .replace(/件起批/g, ' (giá sỉ)')
+        .replace(/起批/g, ' (giá sỉ)')
+        .replace(/(\d+)\s*件起/g, ' (từ $1 chiếc)')
+        .replace(/起/g, ' trở lên')
+        .replace(/售\s*([0-9+万kK]+)\s*件/g, ' · Đã bán $1')
+        .replace(/\/\s*件/g, '/chiếc')
+        .replace(/\/\s*个/g, '/cái')
+        .replace(/\/\s*套/g, '/bộ')
+        .replace(/\/\s*双/g, '/đôi')
+        .replace(/\/\s*包/g, '/gói')
+        .replace(/\/\s*箱/g, '/thùng');
+    }
+
     function formatPricesInText(text: string, prices: Price[], rateVal: string): string {
       let result = text;
       for (const price of prices) {
@@ -125,7 +141,7 @@ export default defineContentScript({
       if (result === text && prices.length > 0) {
         result = prices.map(p => formatPrice(p, rateVal, true)).join(' – ');
       }
-      return result;
+      return translatePriceSuffixes(result);
     }
 
     function applyPriceStyle(element: Element) {
@@ -174,13 +190,26 @@ export default defineContentScript({
         if (!element.isConnected) {
           priceRecords.delete(element);
         } else if (element.textContent !== record.renderedText) {
-          priceRecords.delete(element);
-          element.removeAttribute('data-tc-owned');
-          element.removeAttribute('data-tc-price');
-          if (record.originalStyle !== null) {
-            element.setAttribute('style', record.originalStyle);
+          const currentText = element.textContent || '';
+          const newPrices = parsePrices(currentText, true);
+          if (newPrices.length > 0) {
+            const updated = formatPricesInText(currentText, newPrices, rate.rate);
+            record.originalText = currentText;
+            record.prices = newPrices;
+            record.renderedText = updated;
+            element.textContent = updated;
+            element.setAttribute('data-tc-owned', 'price');
+            element.setAttribute('data-tc-price', '');
+            applyPriceStyle(element);
           } else {
-            element.removeAttribute('style');
+            priceRecords.delete(element);
+            element.removeAttribute('data-tc-owned');
+            element.removeAttribute('data-tc-price');
+            if (record.originalStyle !== null) {
+              element.setAttribute('style', record.originalStyle);
+            } else {
+              element.removeAttribute('style');
+            }
           }
         } else {
           // Re-evaluate with current rate if rate changed

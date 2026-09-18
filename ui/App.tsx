@@ -9,12 +9,12 @@ type Tab = 'page' | 'image' | 'write' | 'settings';
 const availabilityLabels: Record<string, string> = { available: 'Sẵn sàng', downloadable: 'Cần tải gói ngôn ngữ', downloading: 'Đang tải…', unavailable: 'Chưa khả dụng', unsupported: 'Trình duyệt chưa hỗ trợ' };
 
 function Brand({ online, size, onToggleSize }: { online: boolean; size?: PanelSize; onToggleSize?: () => void }) {
-  const sizeLabel = size === 'mini' ? '275px' : size === 'compact' ? '320px' : '380px';
+  const sizeLabel = size === 'micro' ? '240px' : size === 'mini' ? '275px' : size === 'compact' ? '320px' : '380px';
   return <header className="brand">
     <span className="brand-mark" aria-hidden="true">中<span>vi</span></span>
     <div><strong>TranslateChina</strong><span className="brand-caption">GLOBAL IS THE ONLY ONE</span></div>
     <div className="brand-actions">
-      {onToggleSize && <button type="button" className="size-toggle-btn" title={`Đổi kích thước bảng (Hiện tại: ${sizeLabel}). Bấm để chuyển giữa 380px ↔ 320px ↔ 275px.`} onClick={onToggleSize}>↔ {sizeLabel}</button>}
+      {onToggleSize && <button type="button" className="size-toggle-btn" title={`Đổi kích thước bảng (Hiện tại: ${sizeLabel}). Bấm để chuyển giữa 380px ↔ 320px ↔ 275px ↔ 240px.`} onClick={onToggleSize}>↔ {sizeLabel}</button>}
       <span className="local-tag"><i /> {online ? 'Có dịch trực tuyến' : 'Trên máy'}</span>
     </div>
   </header>;
@@ -247,7 +247,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
 
   function toggleSize() {
     const current = settings.panelSize || 'standard';
-    const next: PanelSize = current === 'standard' ? 'compact' : current === 'compact' ? 'mini' : 'standard';
+    const next: PanelSize = current === 'standard' ? 'compact' : current === 'compact' ? 'mini' : current === 'mini' ? 'micro' : 'standard';
     void updateSettings({ panelSize: next });
   }
 
@@ -450,6 +450,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
               <option value="standard">Tiêu chuẩn · 380px (Đầy đủ và dễ nhìn nhất)</option>
               <option value="compact">Gọn vừa · 320px</option>
               <option value="mini">Nhỏ gọn · 275px</option>
+              <option value="micro">Siêu nhỏ · 240px (Tiết kiệm màn hình)</option>
             </select>
           </label>
         </section>

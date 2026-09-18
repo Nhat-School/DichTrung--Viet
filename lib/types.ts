@@ -2,7 +2,7 @@ export type Direction = 'zh-vi' | 'vi-zh';
 export type CommerceSite = 'taobao' | '1688';
 export type Site = CommerceSite | `http://${string}` | `https://${string}`;
 export type OcrLanguage = 'chi_sim' | 'chi_tra';
-export type PanelSize = 'standard' | 'compact' | 'mini';
+export type PanelSize = 'standard' | 'compact' | 'mini' | 'micro';
 export interface Settings { enabled: Record<string, boolean>; manualRate: string; onlineFallback: boolean; ocrLanguage: OcrLanguage; panelSize?: PanelSize; }
 export interface Rate {
   rate: string;

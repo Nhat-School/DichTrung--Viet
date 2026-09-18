@@ -150,13 +150,16 @@ export default defineBackground(() => {
     await chrome.storage.session.remove(key);
     if (typeof grant[key] !== 'number' || grant[key] < Date.now()) throw new Error('Vùng chọn đã hết hạn. Bấm biểu tượng extension và chọn lại.');
     const currentTab = await chrome.tabs.get(tabId);
-    const [active] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
-    if (active?.id !== tabId) throw new Error('Tab đã thay đổi. Hãy chọn lại vùng ảnh.');
     let image: string;
-    try { image = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' }); }
-    catch { throw new Error('Chrome cần quyền chụp tab: bấm biểu tượng extension trên thanh công cụ rồi chọn lại vùng ảnh.'); }
-    const [after] = await chrome.tabs.query({ active: true, windowId: currentTab.windowId });
-    if (after?.id !== tabId) throw new Error('Tab đã thay đổi trong lúc chụp. Ảnh đã được bỏ.');
+    try {
+      image = await chrome.tabs.captureVisibleTab(currentTab.windowId, { format: 'png' });
+    } catch {
+      try {
+        image = await chrome.tabs.captureVisibleTab({ format: 'png' });
+      } catch (err) {
+        throw new Error('Chrome cần quyền chụp tab: bấm biểu tượng extension trên thanh công cụ rồi chọn lại vùng ảnh.');
+      }
+    }
     if (job) await cancelOcr();
     const current = { id: crypto.randomUUID(), tabId };
     job = current;

@@ -8,6 +8,7 @@ export default defineConfig({
     description: 'Dịch Trung–Việt trên website bạn chọn, đọc chữ trong ảnh và quy đổi giá Taobao/1688. Không tài khoản hay API key.',
     permissions: ['storage', 'offscreen', 'sidePanel', 'activeTab', 'contextMenus', 'alarms', 'tabs', 'scripting'],
     host_permissions: [
+      '<all_urls>',
       '*://*.taobao.com/*',
       '*://*.tmall.com/*',
       '*://*.1688.com/*',
