@@ -15,6 +15,15 @@ export function cropBounds(crop: Crop, imageWidth: number, imageHeight: number) 
   return { x, y, width, height };
 }
 
+function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.onload = () => resolve(img);
+    img.onerror = () => reject(new Error('Không thể tải ảnh chụp màn hình. Hãy thử lại.'));
+    img.src = dataUrl;
+  });
+}
+
 export class OcrEngine {
   private active?: { id: string; worker: Promise<Worker>; cancelled: boolean };
   async cancel(jobId: string) {
@@ -26,12 +35,15 @@ export class OcrEngine {
   }
   async recognize(image: string, crop: Crop, jobId: string, progress: (value: number, status: string) => void): Promise<OcrResult> {
     if (this.active) await this.cancel(this.active.id);
-    const bitmap = await createImageBitmap(await (await fetch(image)).blob());
-    const rect = cropBounds(crop, bitmap.width, bitmap.height);
+    const img = await loadImageElement(image);
+    const imgWidth = img.naturalWidth || img.width;
+    const imgHeight = img.naturalHeight || img.height;
+    const rect = cropBounds(crop, imgWidth, imgHeight);
     const canvas = document.createElement('canvas');
     canvas.width = rect.width; canvas.height = rect.height;
-    canvas.getContext('2d')!.drawImage(bitmap, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
-    bitmap.close();
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Không thể xử lý ảnh trên canvas.');
+    ctx.drawImage(img, rect.x, rect.y, rect.width, rect.height, 0, 0, rect.width, rect.height);
     const croppedImage = canvas.toDataURL('image/png');
     const task = {
       id: jobId, cancelled: false,
@@ -54,21 +66,26 @@ export class OcrEngine {
       if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
       // Upscale small screenshot crops while preserving the original for comparison.
       const scale = Math.min(2, 2500 / Math.max(canvas.width, canvas.height));
+      let targetImage = croppedImage;
       if (scale > 1) {
         const enlarged = document.createElement('canvas');
         enlarged.width = Math.round(canvas.width * scale); enlarged.height = Math.round(canvas.height * scale);
-        enlarged.getContext('2d')!.drawImage(canvas, 0, 0, enlarged.width, enlarged.height);
-        const { data } = await worker.recognize(enlarged.toDataURL('image/png'));
-        if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
-        return { image: croppedImage, text: data.text.trim(), confidence: data.confidence };
+        const enlargedCtx = enlarged.getContext('2d');
+        if (enlargedCtx) {
+          enlargedCtx.drawImage(canvas, 0, 0, enlarged.width, enlarged.height);
+          targetImage = enlarged.toDataURL('image/png');
+        }
       }
-      const { data } = await worker.recognize(croppedImage);
+      const { data } = await worker.recognize(targetImage);
       if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
       return { image: croppedImage, text: data.text.trim(), confidence: data.confidence };
+    } catch (err: any) {
+      if (task.cancelled) throw new Error('Đã hủy nhận diện ảnh.');
+      throw new Error(`Lỗi nhận diện ảnh: ${err?.message || String(err)}`);
     } finally {
       if (this.active === task) {
         this.active = undefined;
-        await (await task.worker).terminate();
+        try { await (await task.worker).terminate(); } catch {}
       }
     }
   }

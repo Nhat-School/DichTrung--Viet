@@ -33,6 +33,7 @@ export default defineContentScript({
       originalHtml: string;
       originalText: string;
       originalTitle: string | null;
+      originalStyle: string | null;
       prices: Price[];
       renderedText: string;
     }
@@ -68,6 +69,20 @@ export default defineContentScript({
       return result;
     }
 
+    function applyPriceStyle(element: Element) {
+      if (element instanceof HTMLElement) {
+        element.style.setProperty('font-weight', '800', 'important');
+        element.style.setProperty('background-color', '#ffe8d6', 'important');
+        element.style.setProperty('color', '#b71c1c', 'important');
+        element.style.setProperty('padding', '2px 6px', 'important');
+        element.style.setProperty('border-radius', '4px', 'important');
+        element.style.setProperty('border', '1px solid #ffd0b0', 'important');
+        element.style.setProperty('display', 'inline-block', 'important');
+        element.style.setProperty('line-height', '1.3', 'important');
+        element.style.setProperty('box-shadow', '0 1px 2px rgba(183, 28, 28, 0.08)', 'important');
+      }
+    }
+
     function restorePrices() {
       for (const [element, record] of priceRecords) {
         if (element.isConnected) {
@@ -76,6 +91,11 @@ export default defineContentScript({
             element.setAttribute('title', record.originalTitle);
           } else {
             element.removeAttribute('title');
+          }
+          if (record.originalStyle !== null) {
+            element.setAttribute('style', record.originalStyle);
+          } else {
+            element.removeAttribute('style');
           }
           element.removeAttribute('data-tc-owned');
           element.removeAttribute('data-tc-price');
@@ -98,6 +118,20 @@ export default defineContentScript({
           priceRecords.delete(element);
           element.removeAttribute('data-tc-owned');
           element.removeAttribute('data-tc-price');
+          if (record.originalStyle !== null) {
+            element.setAttribute('style', record.originalStyle);
+          } else {
+            element.removeAttribute('style');
+          }
+        } else {
+          // Re-evaluate with current rate if rate changed
+          const updatedText = formatPricesInText(record.originalText, record.prices, rate.rate);
+          if (updatedText !== record.renderedText) {
+            record.renderedText = updatedText;
+            element.textContent = updatedText;
+            element.setAttribute('title', `Giá gốc: ${record.prices.map(p => p.raw).join(' · ')} · Tỷ giá: 1 CNY ≈ ${rate.rate} VNĐ`);
+            applyPriceStyle(element);
+          }
         }
       }
 
@@ -111,6 +145,7 @@ export default defineContentScript({
           originalHtml: element.innerHTML,
           originalText,
           originalTitle: element.getAttribute('title'),
+          originalStyle: element.getAttribute('style'),
           prices,
           renderedText: newText,
         });
@@ -119,6 +154,7 @@ export default defineContentScript({
         element.setAttribute('data-tc-owned', 'price');
         element.setAttribute('data-tc-price', '');
         element.setAttribute('title', `Giá gốc: ${prices.map(p => p.raw).join(' · ')} · Tỷ giá: 1 CNY ≈ ${rate.rate} VNĐ`);
+        applyPriceStyle(element);
       }
     }
 

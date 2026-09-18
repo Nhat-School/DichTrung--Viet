@@ -14,12 +14,12 @@ export default defineConfig({
       '<all_urls>',
     ],
     content_security_policy: {
-      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.frankfurter.dev https://translate.googleapis.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'",
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self' blob:; connect-src 'self' data: blob: https://api.frankfurter.dev https://translate.googleapis.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'",
     },
     web_accessible_resources: [
       {
         resources: ['vendor/*', 'vendor/**/*', 'icon/*'],
-        matches: ['*://*.taobao.com/*', '*://*.1688.com/*'],
+        matches: ['*://*.taobao.com/*', '*://*.1688.com/*', '<all_urls>'],
       },
     ],
     action: { default_title: 'TranslateChina' },
