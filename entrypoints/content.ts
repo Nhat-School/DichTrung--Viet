@@ -3,21 +3,22 @@ import { PageTranslator } from '../lib/page-translator';
 import { findPriceElements } from '../lib/price-elements';
 import { formatPrice, parsePrices, type Price } from '../lib/prices';
 import { request } from '../lib/messages';
-import { isCommerceSite, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
+import { isCommerceSite, isSiteEnabled, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
 
 export default defineContentScript({
-  matches: [
-    '*://*.taobao.com/*',
-    '*://*.tmall.com/*',
-    '*://*.1688.com/*',
-    '*://*.alibaba.com/*',
-    '*://*.aliapp.org/*',
-    '*://*.alipay.com/*',
-  ],
+  matches: ['*://*/*'],
   runAt: 'document_idle',
   allFrames: true,
   main(ctx) {
-    const site = siteFor(location.href);
+    let currentUrl = location.href;
+    if (window !== window.top && (currentUrl === 'about:blank' || !currentUrl.startsWith('http'))) {
+      try {
+        currentUrl = window.top?.location.href || currentUrl;
+      } catch {
+        currentUrl = document.referrer || currentUrl;
+      }
+    }
+    const site = siteFor(currentUrl) || (location.protocol.startsWith('http') ? `${location.protocol}//${location.host}` : undefined);
     if (!site || !document.body || document.querySelector('[data-tc-root]')) return;
     const host = document.createElement('div');
     host.dataset.tcRoot = ''; host.dataset.tcOwned = ''; host.style.cssText = 'position:fixed;inset:0;z-index:2147483646;pointer-events:none;';
@@ -55,13 +56,13 @@ export default defineContentScript({
     }
 
     async function scanCaptchaPrompt() {
-      const candidates = document.querySelectorAll<HTMLImageElement | HTMLCanvasElement>(
-        '[class*="captcha" i] img, [id*="captcha" i] img, .baxia-dialog img, [id*="baxia" i] img, .nc-container img, [id*="nc_" i] img, .ui-dialog img, [class*="captcha" i] canvas, .baxia-dialog canvas'
+      const candidates = document.querySelectorAll<HTMLElement>(
+        '[class*="captcha" i] img, [id*="captcha" i] img, .baxia-dialog img, [id*="baxia" i] img, .nc-container img, [id*="nc_" i] img, .ui-dialog img, [class*="dialog" i] img, [class*="modal" i] img, [class*="challenge" i] img, [class*="verify" i] img, [class*="turing" i] img, img[src*="captcha" i], img[src*="challenge" i], img[src*="getimage" i], [class*="captcha" i] canvas, [id*="captcha" i] canvas, .baxia-dialog canvas, [class*="dialog" i] canvas, [class*="modal" i] canvas, [class*="captcha" i] [style*="background-image"], [id*="captcha" i] [style*="background-image"], .baxia-dialog [style*="background-image"]'
       );
       for (const el of candidates) {
         if (processedCaptchaImages.has(el) || el.closest('[data-tc-owned]')) continue;
         const rect = el.getBoundingClientRect();
-        const isBanner = rect.width >= 70 && rect.width <= 400 && rect.height >= 16 && rect.height <= 110 && (rect.width / (rect.height || 1) >= 1.3);
+        const isBanner = rect.width >= 50 && rect.width <= 480 && rect.height >= 12 && rect.height <= 130 && (rect.width / (rect.height || 1) >= 1.2);
         if (!isBanner) continue;
         processedCaptchaImages.add(el);
         try {
@@ -70,13 +71,23 @@ export default defineContentScript({
             if (el.src.startsWith('data:image/')) {
               dataUrl = el.src;
             } else if (el.naturalWidth > 0) {
-              const canvas = document.createElement('canvas');
-              canvas.width = el.naturalWidth; canvas.height = el.naturalHeight;
-              const ctx2d = canvas.getContext('2d');
-              if (ctx2d) { ctx2d.drawImage(el, 0, 0); dataUrl = canvas.toDataURL('image/png'); }
+              try {
+                const canvas = document.createElement('canvas');
+                canvas.width = el.naturalWidth; canvas.height = el.naturalHeight;
+                const ctx2d = canvas.getContext('2d');
+                if (ctx2d) { ctx2d.drawImage(el, 0, 0); dataUrl = canvas.toDataURL('image/png'); }
+              } catch {
+                dataUrl = el.src;
+              }
+            } else {
+              dataUrl = el.src;
             }
           } else if (el instanceof HTMLCanvasElement && el.width > 0) {
-            dataUrl = el.toDataURL('image/png');
+            try { dataUrl = el.toDataURL('image/png'); } catch {}
+          } else {
+            const bg = window.getComputedStyle(el).backgroundImage;
+            const match = bg && /url\(["']?([^"']+)["']?\)/i.exec(bg);
+            if (match) dataUrl = match[1];
           }
           if (dataUrl) {
             const ocrRes = await request<{ text: string }>({ type: 'ocr-image', image: dataUrl }).catch(() => null);
@@ -84,13 +95,18 @@ export default defineContentScript({
               const zh = ocrRes.text.trim().replace(/\s+/g, ' ');
               const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
               const parent = el.parentElement;
-              if (parent && !parent.querySelector('.tc-captcha-badge')) {
-                const badge = document.createElement('div');
-                badge.className = 'tc-captcha-badge';
-                badge.dataset.tcOwned = '';
-                badge.style.cssText = 'background:#102a26;color:#2be6ab;font:bold 13px/1.4 system-ui,sans-serif;padding:8px 12px;border-radius:8px;margin:6px 0;display:flex;align-items:center;gap:6px;box-shadow:0 3px 10px rgba(0,0,0,0.25);border:1px solid #23815e;z-index:2147483647;';
-                badge.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
-                parent.insertBefore(badge, el);
+              if (parent) {
+                const existing = parent.querySelector('.tc-captcha-badge');
+                if (existing) {
+                  existing.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
+                } else {
+                  const badge = document.createElement('div');
+                  badge.className = 'tc-captcha-badge';
+                  badge.dataset.tcOwned = '';
+                  badge.style.cssText = 'background:#102a26;color:#2be6ab;font:bold 13px/1.4 system-ui,sans-serif;padding:8px 12px;border-radius:8px;margin:6px 0;display:flex;align-items:center;gap:6px;box-shadow:0 3px 10px rgba(0,0,0,0.25);border:1px solid #23815e;z-index:2147483647;';
+                  badge.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
+                  parent.insertBefore(badge, el);
+                }
               }
             }
           }
@@ -100,7 +116,7 @@ export default defineContentScript({
 
     function scheduleCaptcha() {
       clearTimeout(captchaTimer);
-      captchaTimer = setTimeout(() => void scanCaptchaPrompt(), 400);
+      captchaTimer = setTimeout(() => void scanCaptchaPrompt(), 300);
     }
 
     const translator = new PageTranslator(
@@ -180,7 +196,7 @@ export default defineContentScript({
     }
 
     function renderPrices() {
-      if (!isCommerceSite(site) || !settings?.enabled[site!] || !rate) {
+      if (!isCommerceSite(site) || !isSiteEnabled(settings, site) || !rate) {
         restorePrices();
         return;
       }
@@ -255,7 +271,7 @@ export default defineContentScript({
       try {
         const state = await request<{ settings: Settings; rate: Rate | null }>({ type: 'get-state' });
         settings = state.settings; rate = state.rate;
-        if (settings.enabled[site!]) {
+        if (isSiteEnabled(settings, site)) {
           translator.start();
           if (retry) translator.retry();
         } else {

@@ -228,9 +228,13 @@ export default defineBackground(() => {
             if (next.onlineFallback && !await chrome.permissions.contains({ origins: ['https://translate.googleapis.com/*'] })) throw new Error('Chưa cấp quyền dịch trực tuyến.');
             settings.onlineFallback = next.onlineFallback;
           }
-          if (next.enabled) for (const [key, value] of Object.entries(next.enabled)) if (sitePattern(key) && typeof value === 'boolean') {
-            if (value && !isCommerceSite(key) && !await chrome.permissions.contains({ origins: [sitePattern(key)!] })) throw new Error('Bấm Cho phép dịch trên website này để cấp quyền.');
-            settings.enabled[key] = value;
+          if (typeof next.autoTranslateAll === 'boolean') {
+            settings.autoTranslateAll = next.autoTranslateAll;
+          }
+          if (next.enabled) for (const [key, value] of Object.entries(next.enabled)) {
+            if (typeof value === 'boolean') {
+              settings.enabled[key] = value;
+            }
           }
           const storage = localStorageArea();
           if (!storage) throw new AppError('STORAGE_UNAVAILABLE', 'Chrome chưa cung cấp bộ nhớ extension. Hãy tải lại extension tại chrome://extensions rồi tải lại trang.');
@@ -251,8 +255,7 @@ export default defineBackground(() => {
           const tabId = (message as Extract<Request, { type: 'enable-site' }>).tabId;
           const tab = await chrome.tabs.get(tabId);
           const site = siteFor(tab.url || '');
-          const pattern = site && sitePattern(site);
-          if (!site || !pattern || !await chrome.permissions.contains({ origins: [pattern] })) throw new Error('Chưa cấp quyền cho website này.');
+          if (!site) throw new Error('Không thể xác định website.');
           const settings = await getSettings();
           settings.enabled[site] = true;
           const storage = localStorageArea();
@@ -321,12 +324,10 @@ export default defineBackground(() => {
   chrome.permissions.onRemoved.addListener(() => {
     void (async () => {
       const settings = await getSettings();
-      for (const site of Object.keys(settings.enabled)) if (!isCommerceSite(site) && sitePattern(site) && !await chrome.permissions.contains({ origins: [sitePattern(site)!] })) settings.enabled[site] = false;
       if (!await chrome.permissions.contains({ origins: ['https://translate.googleapis.com/*'] })) settings.onlineFallback = false;
       const storage = localStorageArea();
       if (!storage) return;
       await storage.set({ settings });
-      await syncSites();
       await broadcast('settings-updated');
     })();
   });

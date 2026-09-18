@@ -3,7 +3,11 @@ export type CommerceSite = 'taobao' | '1688';
 export type Site = CommerceSite | `http://${string}` | `https://${string}`;
 export type OcrLanguage = 'chi_sim' | 'chi_tra';
 export type PanelSize = 'standard' | 'compact' | 'mini' | 'micro';
-export interface Settings { enabled: Record<string, boolean>; manualRate: string; onlineFallback: boolean; ocrLanguage: OcrLanguage; panelSize?: PanelSize; }
+export interface Settings { enabled: Record<string, boolean>; autoTranslateAll?: boolean; manualRate: string; onlineFallback: boolean; ocrLanguage: OcrLanguage; panelSize?: PanelSize; }
+export function isSiteEnabled(settings: Settings | undefined, site: string | undefined): boolean {
+  if (!settings || !site) return false;
+  return (settings.autoTranslateAll ?? true) ? settings.enabled[site] !== false : !!settings.enabled[site];
+}
 export interface Rate {
   rate: string;
   date: string;

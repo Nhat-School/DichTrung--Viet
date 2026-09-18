@@ -61,7 +61,7 @@ export class PageTranslator {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'placeholder', 'aria-label', 'alt'],
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'placeholder', 'aria-label', 'alt', 'value'],
     });
     this.schedule();
   }
@@ -73,6 +73,8 @@ export class PageTranslator {
     for (const [el, records] of this.attrRecords) for (const record of records.values()) {
       if (el.isConnected && record.rendered !== undefined && el.getAttribute(record.attr) === record.rendered) {
         el.setAttribute(record.attr, record.original);
+        if (record.attr === 'value' && el instanceof HTMLInputElement) el.value = record.original;
+        if (record.attr === 'placeholder' && el instanceof HTMLInputElement) el.placeholder = record.original;
       }
     }
     this.records.clear(); this.attrRecords.clear(); this.translated = 0; this.error = undefined;
@@ -115,7 +117,7 @@ export class PageTranslator {
     if (!this.enabled) return;
     this.rescanRequested = true;
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => void this.scan(), 120);
+    this.timer = setTimeout(() => void this.scan(), 50);
   };
 
   async translateNodes(nodes: Text[]) {
@@ -188,7 +190,7 @@ export class PageTranslator {
     try {
       for (const node of this.records.keys()) if (!node.isConnected) this.records.delete(node);
       for (const el of this.attrRecords.keys()) if (!el.isConnected) this.attrRecords.delete(el);
-      const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT, {
+      const filter: NodeFilter = {
         acceptNode: node => {
           const parent = node.parentElement;
           if (!parent || isExcluded(parent) || !this.visible(parent) || isPriceNode(node as Text, parent)) return NodeFilter.FILTER_REJECT;
@@ -196,20 +198,52 @@ export class PageTranslator {
           if (record?.rendered === (node as Text).data || record?.failed === (node as Text).data || record?.pending) return NodeFilter.FILTER_REJECT;
           return hasChinese((node as Text).data) ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_REJECT;
         },
-      });
+      };
+
       const batch: Text[] = [];
-      while (batch.length < 60) { const node = walker.nextNode(); if (!node) break; batch.push(node as Text); }
+
+      // Prioritize active popups, modals, dialogs, and captchas so they translate immediately
+      const modals = this.root.querySelectorAll<HTMLElement>(
+        '[role="dialog"], [class*="dialog" i], [class*="modal" i], [class*="popup" i], [class*="captcha" i], .baxia-dialog, [id*="baxia" i], .nc-container, [id*="nc_" i], .ui-dialog'
+      );
+      for (const modal of modals) {
+        if (!this.visible(modal) || modal.closest('[data-tc-owned]')) continue;
+        const modalWalker = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT, filter);
+        while (batch.length < 60) {
+          const node = modalWalker.nextNode();
+          if (!node) break;
+          batch.push(node as Text);
+        }
+        if (batch.length >= 60) break;
+      }
+
+      if (batch.length < 60) {
+        const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT, filter);
+        while (batch.length < 60) {
+          const node = walker.nextNode();
+          if (!node) break;
+          if (!batch.includes(node as Text)) batch.push(node as Text);
+        }
+      }
+
       if (batch.length) {
         await this.translateNodes(batch);
       }
 
-      // Translate visible metadata without ever reading or changing form values.
-      const attrElements = this.root.querySelectorAll<HTMLElement>('[placeholder], [title], [aria-label], img[alt]');
+      // Translate visible metadata (including input buttons) without touching user inputs.
+      const attrElements = this.root.querySelectorAll<HTMLElement>(
+        '[placeholder], [title], [aria-label], img[alt], input[type="button"][value], input[type="submit"][value], input[type="reset"][value]'
+      );
       const pendingAttrs: { el: HTMLElement; attr: string; val: string; record: AttrRecordState }[] = [];
       for (const el of attrElements) {
         if (!this.enabled || this.generation !== generation || pendingAttrs.length >= 60) break;
         if (!el.isConnected || !this.visible(el) || el.closest('[data-tc-owned],[translate="no"],[contenteditable]:not([contenteditable="false"])') || (el.parentElement && isExcluded(el.parentElement))) continue;
-        for (const attr of ['placeholder', 'title', 'aria-label', 'alt']) {
+        const isInputButton = el instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes((el.type || '').toLowerCase());
+        const attrsToScan = isInputButton
+          ? ['value', 'title', 'aria-label']
+          : ['placeholder', 'title', 'aria-label', 'alt'];
+
+        for (const attr of attrsToScan) {
           const val = el.getAttribute(attr) || '';
           if (!val || !hasChinese(val) || val.length > 1000) continue;
           let records = this.attrRecords.get(el);
@@ -231,7 +265,11 @@ export class PageTranslator {
             const { el, attr, val, record } = pendingAttrs[i];
             const result = translated[i];
             if (this.enabled && this.generation === generation && el.isConnected && el.getAttribute(attr) === val && record.original === val && result) {
-              record.rendered = result; el.setAttribute(attr, result); this.translated++;
+              record.rendered = result;
+              el.setAttribute(attr, result);
+              if (attr === 'value' && el instanceof HTMLInputElement) el.value = result;
+              if (attr === 'placeholder' && el instanceof HTMLInputElement) el.placeholder = result;
+              this.translated++;
             }
           }
         } catch (error) {

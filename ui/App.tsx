@@ -3,7 +3,7 @@ import { request } from '../lib/messages';
 import { TranslationEngine } from '../lib/translator';
 import { splitText } from '../lib/text-chunks';
 import { DEFAULT_SETTINGS, getSettings } from '../lib/storage';
-import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type Direction, type EngineStatus, type OcrResult, type OcrState, type PageStatus, type PanelSize, type Rate, type Settings } from '../lib/types';
+import { AppError, errorMessage, isCommerceSite, isSiteEnabled, siteFor, sitePattern, type Direction, type EngineStatus, type OcrResult, type OcrState, type PageStatus, type PanelSize, type Rate, type Settings } from '../lib/types';
 
 type Tab = 'page' | 'image' | 'write' | 'settings';
 const availabilityLabels: Record<string, string> = { available: 'Sẵn sàng', downloadable: 'Cần tải gói ngôn ngữ', downloading: 'Đang tải…', unavailable: 'Chưa khả dụng', unsupported: 'Trình duyệt chưa hỗ trợ' };
@@ -270,7 +270,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
       {notice && <div className="message success" role="status">{notice}<button className="dismiss" aria-label="Đóng thông báo" onClick={() => setNotice('')}>×</button></div>}
 
       {(popup || tab === 'page') && <>
-        <section className="site-card"><div className="row"><div><span className="eyebrow">TRANG ĐANG XEM</span><h2>{site ? site === 'taobao' ? 'Taobao' : site === '1688' ? '1688' : new URL(site).hostname : 'Mở một website'}</h2></div>{site && <label className="switch"><input type="checkbox" aria-label={`Tự dịch ${site}`} checked={!!settings.enabled[site]} onChange={event => { if (event.target.checked && !isCommerceSite(site)) enableSite(); else void updateSettings({ enabled: { ...settings.enabled, [site]: event.target.checked } }); }} /><span /></label>}</div><p className="muted">{site ? settings.enabled[site] ? isCommerceSite(site) ? 'Dịch sang tiếng Việt và hiển thị giá VNĐ.' : 'Tự dịch chữ tiếng Trung trên website này.' : 'Đang xem bản gốc. Bật lại khi cần dịch.' : 'Mở website HTTP/HTTPS cần dịch rồi bấm biểu tượng extension.'}</p>
+        <section className="site-card"><div className="row"><div><span className="eyebrow">TRANG ĐANG XEM</span><h2>{site ? site === 'taobao' ? 'Taobao' : site === '1688' ? '1688' : new URL(site).hostname : 'Mở một website'}</h2></div>{site && <label className="switch"><input type="checkbox" aria-label={`Tự dịch ${site}`} checked={isSiteEnabled(settings, site)} onChange={event => { void updateSettings({ enabled: { ...settings.enabled, [site]: event.target.checked } }); }} /><span /></label>}</div><p className="muted">{site ? isSiteEnabled(settings, site) ? isCommerceSite(site) ? 'Dịch sang tiếng Việt và hiển thị giá VNĐ.' : 'Tự dịch chữ tiếng Trung trên website này.' : 'Đang xem bản gốc. Bật lại khi cần dịch.' : 'Mở website HTTP/HTTPS cần dịch rồi bấm biểu tượng extension.'}</p>
           {pageStatus?.error && (
             <div className="warning">
               <div>{pageStatus.error}</div>
@@ -289,8 +289,7 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
             </div>
           )}
           {site && pageStatus && <div className="status-line"><i />{pageStatus.translated} đoạn đã dịch {pageStatus.pending > 0 ? '· Đang xử lý…' : ''}</div>}
-          {site && !isCommerceSite(site) && !settings.enabled[site] && <button className="primary full" onClick={enableSite}>Cho phép dịch website này</button>}
-          {site && settings.enabled[site] && !pageStatus && <p className="warning">Tải lại trang sau khi cài hoặc cập nhật extension.</p>}
+          {site && isSiteEnabled(settings, site) && !pageStatus && <p className="warning">Tải lại trang sau khi cài hoặc cập nhật extension.</p>}
         </section>
         {isCommerceSite(site) && rateCard}
         <section><div className="section-heading"><h2>Chữ nằm trong ảnh?</h2><span className="pill">OCR</span></div><p className="muted">Chọn phần đang thấy trên màn hình để đọc bằng tiếng Việt.</p><div className="two-buttons"><button className="secondary" disabled={!site} onClick={() => capture('region')}>⌗ Khoanh vùng</button><button className="secondary" disabled={!site} onClick={() => capture('image')}>▧ Chọn ảnh</button></div></section>
@@ -454,7 +453,33 @@ export function App({ popup = false, initialTab = 'page' }: { popup?: boolean; i
             </select>
           </label>
         </section>
-        <section><h2>Tự dịch theo website</h2><p className="muted">Với website khác, mở trang và bấm Cho phép dịch website này. Bạn chỉ cấp quyền cho địa chỉ đó.</p>{Object.keys(settings.enabled).map(name => <label className="setting-row" key={name}><span>{name === 'taobao' ? 'Taobao' : name === '1688' ? '1688' : name.replace(/^https?:\/\//, '')}</span><input type="checkbox" checked={!!settings.enabled[name]} onChange={e => void updateSettings({ enabled: { ...settings.enabled, [name]: e.target.checked } })} /></label>)}</section>
+        <section>
+          <h2>Tự động dịch website</h2>
+          <p className="muted">Áp dụng cho mọi website có chữ tiếng Trung.</p>
+          <label className="setting-row">
+            <span>Tự động dịch mọi website tiếng Trung</span>
+            <input
+              type="checkbox"
+              checked={settings.autoTranslateAll ?? true}
+              onChange={e => void updateSettings({ autoTranslateAll: e.target.checked })}
+            />
+          </label>
+          {Object.keys(settings.enabled).length > 0 && (
+            <div style={{ marginTop: '12px' }}>
+              <p className="muted small">Tùy chọn bật/tắt riêng từng website:</p>
+              {Object.keys(settings.enabled).map(name => (
+                <label className="setting-row" key={name}>
+                  <span>{name === 'taobao' ? 'Taobao' : name === '1688' ? '1688' : name.replace(/^https?:\/\//, '')}</span>
+                  <input
+                    type="checkbox"
+                    checked={isSiteEnabled(settings, name)}
+                    onChange={e => void updateSettings({ enabled: { ...settings.enabled, [name]: e.target.checked } })}
+                  />
+                </label>
+              ))}
+            </div>
+          )}
+        </section>
         {rateCard}
         <section><h2>Tỷ giá riêng</h2><p className="muted">Nhập số VNĐ cho 1 CNY nếu bạn có tỷ giá riêng. Bỏ trống để dùng nguồn tự động.</p><label className="field">1 CNY =<div className="input-unit"><input inputMode="decimal" placeholder="Ví dụ 3870.34" value={manualRate} onChange={e => setManualRate(e.target.value)} /><span>VNĐ</span></div></label><div className="two-buttons"><button className="secondary" onClick={() => void updateSettings({ manualRate })}>Lưu tỷ giá</button><button className="text-button" onClick={() => { setManualRate(''); void updateSettings({ manualRate: '' }); }}>Dùng tự động</button></div></section>
         <section className="privacy"><h3>Bạn quyết định nơi dịch</h3><p>Mặc định dịch và nhận diện ảnh trên máy. Không tài khoản, quảng cáo hay theo dõi. Nếu bật dịch trực tuyến bên dưới, văn bản cần dịch có thể được gửi tới Google. Ảnh luôn nhận diện trên máy. Giá VNĐ là ước tính.</p><label className="setting-row"><span>Cho phép Google dịch khi bộ dịch trên máy chưa sẵn sàng</span><input type="checkbox" checked={settings.onlineFallback} onChange={event => setOnlineFallback(event.target.checked)} /></label><p>Tùy chọn miễn phí, không API key; nguồn trực tuyến không chính thức có thể bị giới hạn hoặc ngừng hoạt động.</p><p>Tỷ giá theo ngày. Bản dịch máy và chữ trong ảnh luôn cần đối chiếu khi thông tin chưa rõ.</p></section>
