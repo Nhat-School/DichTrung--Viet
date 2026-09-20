@@ -114,16 +114,22 @@ export default defineContentScript({
               const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
               const parent = el.parentElement;
               if (parent) {
-                const existing = parent.querySelector('.tc-captcha-badge');
-                if (existing) {
-                  existing.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
-                } else {
-                  const badge = document.createElement('div');
-                  badge.className = 'tc-captcha-badge';
-                  badge.dataset.tcOwned = '';
-                  badge.style.cssText = 'background:#102a26;color:#2be6ab;font:bold 13px/1.4 system-ui,sans-serif;padding:8px 12px;border-radius:8px;margin:6px 0;display:flex;align-items:center;gap:6px;box-shadow:0 3px 10px rgba(0,0,0,0.25);border:1px solid #23815e;z-index:2147483647;';
-                  badge.innerHTML = `<span>🏷️ Yêu cầu captcha:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span>`;
-                  parent.insertBefore(badge, el);
+                if (window.getComputedStyle(parent).position === 'static') {
+                  parent.style.position = 'relative';
+                }
+                const existing = parent.querySelector<HTMLElement>('.tc-captcha-badge');
+                const badge = existing || document.createElement('div');
+                badge.className = 'tc-captcha-badge';
+                badge.dataset.tcOwned = '';
+                badge.style.cssText = 'position:absolute;top:0;left:0;right:0;background:#102a26fa;backdrop-filter:blur(6px);color:#2be6ab;font:bold 12px/1.25 system-ui,sans-serif;padding:6px 10px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid #23815e;z-index:2147483647;cursor:pointer;pointer-events:auto;';
+                badge.title = 'Bấm để ẩn và xem ảnh gốc';
+                badge.innerHTML = `<div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="flex-shrink:0;">🏷️ Yêu cầu:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span></div><button class="tc-badge-close" style="background:none;border:none;color:#9bc9bb;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;" aria-label="Đóng">×</button>`;
+                badge.onclick = (e) => {
+                  e.stopPropagation();
+                  badge.remove();
+                };
+                if (!existing) {
+                  parent.appendChild(badge);
                 }
               }
             }

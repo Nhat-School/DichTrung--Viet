@@ -1,5 +1,32 @@
 import type { OcrLine } from './types';
 
+function otsuThreshold(pixels: Uint8ClampedArray): number {
+  const histogram = new Int32Array(256);
+  const total = pixels.length / 4;
+  for (let i = 0; i < pixels.length; i += 4) {
+    const gray = Math.round(.299 * pixels[i] + .587 * pixels[i + 1] + .114 * pixels[i + 2]);
+    histogram[gray]++;
+  }
+  let sum = 0;
+  for (let i = 0; i < 256; i++) sum += i * histogram[i];
+  let sumB = 0, wB = 0, maxVar = 0, threshold = 128;
+  for (let t = 0; t < 256; t++) {
+    wB += histogram[t];
+    if (wB === 0) continue;
+    const wF = total - wB;
+    if (wF === 0) break;
+    sumB += t * histogram[t];
+    const mB = sumB / wB;
+    const mF = (sum - sumB) / wF;
+    const between = wB * wF * (mB - mF) * (mB - mF);
+    if (between > maxVar) {
+      maxVar = between;
+      threshold = t;
+    }
+  }
+  return threshold;
+}
+
 /** Keep source geometry identical across passes so alternatives can be compared spatially. */
 export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement[] {
   const scale = Math.min(3, 2400 / Math.max(source.width, source.height), Math.sqrt(4_000_000 / (source.width * source.height)));
@@ -10,6 +37,21 @@ export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, normal.width, normal.height);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, normal.width, normal.height);
+
+  // High-contrast binarization with Otsu's thresholding to isolate characters from noisy textures.
+  const binarized = document.createElement('canvas');
+  binarized.width = normal.width; binarized.height = normal.height;
+  const binarizedCtx = binarized.getContext('2d')!;
+  const binPixels = ctx.getImageData(0, 0, normal.width, normal.height);
+  const thresh = otsuThreshold(binPixels.data);
+  for (let i = 0; i < binPixels.data.length; i += 4) {
+    const gray = .299 * binPixels.data[i] + .587 * binPixels.data[i + 1] + .114 * binPixels.data[i + 2];
+    const v = gray < thresh ? 0 : 255;
+    binPixels.data[i] = binPixels.data[i + 1] = binPixels.data[i + 2] = v;
+    binPixels.data[i + 3] = 255;
+  }
+  binarizedCtx.putImageData(binPixels, 0, 0);
+
   const inverted = document.createElement('canvas');
   inverted.width = normal.width; inverted.height = normal.height;
   const invertedContext = inverted.getContext('2d')!;
@@ -22,7 +64,7 @@ export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement
     pixels.data[i + 3] = 255;
   }
   invertedContext.putImageData(pixels, 0, 0);
-  return [normal, inverted];
+  return [normal, binarized, inverted];
 }
 
 export function cleanOcrText(value: string): string {

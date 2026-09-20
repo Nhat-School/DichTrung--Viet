@@ -108,8 +108,9 @@ export class TranslationEngine {
     if (cached) return cached;
     const existing = this.pending.get(key);
     if (existing) return existing;
-    const task = this.tail.catch(() => {}).then(async () => {
+    const task = (async () => {
       let backend: (value: string) => Promise<string>;
+      let useNativeTail = false;
       try {
         const api = this.api();
         if (!api) throw new AppError('UNSUPPORTED', 'Bộ dịch trên thiết bị chưa khả dụng. Mở Thiết lập để kiểm tra.');
@@ -120,6 +121,7 @@ export class TranslationEngine {
         try { model = await this.initialize(direction); }
         catch { throw new AppError('NEED_VISIBLE', 'Chrome cần giao diện đang mở. Hãy mở bảng công cụ và khởi tạo bộ dịch.'); }
         backend = value => model.translate(value);
+        useNativeTail = true;
       } catch (error) {
         if (!online || !await this.allowOnline()) throw error;
         backend = async value => {
@@ -128,24 +130,34 @@ export class TranslationEngine {
           return fetchTranslateFallback(value, direction);
         };
       }
-      // Give the model the real sentence first. Masking every number harms grammar/context.
-      let result = await backend(text);
-      if (!result.trim()) throw new Error('Bộ dịch trả về nội dung trống.');
-      if (!preservesFacts(text, result, direction)) {
-        const shield = protectTokens(text, direction);
-        try {
-          const shielded = await backend(shield.text);
-          result = shield.restore(shielded);
-        } catch {
-          // If shielded restoration fails, check whether result still preserves facts or throw
+
+      const execute = async () => {
+        // Give the model the real sentence first. Masking every number harms grammar/context.
+        let result = await backend(text);
+        if (!result.trim()) throw new Error('Bộ dịch trả về nội dung trống.');
+        if (!preservesFacts(text, result, direction)) {
+          const shield = protectTokens(text, direction);
+          try {
+            const shielded = await backend(shield.text);
+            result = shield.restore(shielded);
+          } catch {
+            // If shielded restoration fails, check whether result still preserves facts or throw
+          }
+          if (!preservesFacts(text, result, direction)) throw new Error('Bản dịch làm thay đổi số liệu hoặc mã hàng. Đã giữ nguyên văn.');
         }
-        if (!preservesFacts(text, result, direction)) throw new Error('Bản dịch làm thay đổi số liệu hoặc mã hàng. Đã giữ nguyên văn.');
+        this.cache.set(key, result);
+        if (this.cache.size > 1500) this.cache.delete(this.cache.keys().next().value!);
+        return result;
+      };
+
+      if (useNativeTail) {
+        const queued = this.tail.catch(() => {}).then(execute);
+        this.tail = queued;
+        return queued;
       }
-      this.cache.set(key, result);
-      if (this.cache.size > 1500) this.cache.delete(this.cache.keys().next().value!);
-      return result;
-    });
-    this.tail = task;
+      return execute();
+    })();
+
     this.pending.set(key, task);
     try { return await task; } finally { this.pending.delete(key); }
   }
