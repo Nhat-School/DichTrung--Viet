@@ -1,7 +1,7 @@
 import { defineBackground } from 'wxt/utils/define-background';
 import { getSettings, localStorageArea } from '../lib/storage';
 import { loadRate, validateManualRate } from '../lib/currency';
-import { AppError, errorMessage, isCommerceSite, siteFor, sitePattern, type EngineRequest, type OcrState, type Rate, type Reply, type Request } from '../lib/types';
+import { AppError, errorMessage, isCommerceSite, isSiteEnabled, siteFor, sitePattern, type EngineRequest, type OcrState, type Rate, type Reply, type Request } from '../lib/types';
 
 export default defineBackground(() => {
   let offscreenCreating: Promise<void> | undefined;
@@ -208,7 +208,7 @@ export default defineBackground(() => {
         case 'translate': case 'translate-batch': {
           if (!extensionUI) {
             const site = siteFor(sender.tab?.url || '')!;
-            if (!(await getSettings()).enabled[site]) throw new AppError('SITE_DISABLED', 'Đã tắt dịch trên website này.');
+            if (!isSiteEnabled(await getSettings(), site)) throw new AppError('SITE_DISABLED', 'Đã tắt dịch trên website này.');
           }
           return message.type === 'translate' ? translate(message.text, message.direction) : translateBatch((message as Extract<Request, { type: 'translate-batch' }>).texts, (message as Extract<Request, { type: 'translate-batch' }>).direction);
         }

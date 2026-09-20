@@ -202,6 +202,47 @@ describe('PageTranslator lifecycle and stale invalidation', () => {
     expect(badge.getAttribute('title')).toBe('正品保证');
   });
 
+  it('translates login dialogs in open Shadow DOM, including submit button labels', async () => {
+    const translations: Record<string, string> = {
+      '短信登录': 'Đăng nhập SMS',
+      '请输入验证码': 'Vui lòng nhập mã xác minh',
+      '登录': 'Đăng nhập',
+    };
+    const translator = new PageTranslator(root, async text => translations[text] || text, () => {}, () => true);
+    translator.start();
+
+    // The login component is attached after the initial page scan, as happens
+    // when a site opens a sign-in dialog.
+    const host = document.createElement('login-dialog');
+    const shadow = host.attachShadow({ mode: 'open' });
+    shadow.innerHTML = '<section role="dialog"><h2>短信登录</h2><input placeholder="请输入验证码"><input type="submit" value="登录"></section>';
+    root.append(host);
+    await Promise.resolve();
+    await translator.scan();
+
+    expect(shadow.querySelector('h2')?.textContent).toBe('Đăng nhập SMS');
+    expect(shadow.querySelector('input[placeholder]')?.getAttribute('placeholder')).toBe('Vui lòng nhập mã xác minh');
+    expect(shadow.querySelector('input[type="submit"]')?.getAttribute('value')).toBe('Đăng nhập');
+
+    translator.stop();
+    expect(shadow.querySelector('h2')?.textContent).toBe('短信登录');
+    expect(shadow.querySelector('input[placeholder]')?.getAttribute('placeholder')).toBe('请输入验证码');
+    expect(shadow.querySelector('input[type="submit"]')?.getAttribute('value')).toBe('登录');
+  });
+
+  it('continues through a large group of visible input buttons', async () => {
+    root.innerHTML = Array.from({ length: 61 }, (_, index) => `<input type="submit" value="登录${index}">`).join('');
+    const translator = new PageTranslator(root, async text => `VI ${text}`, () => {}, () => true);
+    translator.start();
+    await translator.scan();
+    await translator.scan();
+
+    const buttons = root.querySelectorAll<HTMLInputElement>('input[type="submit"]');
+    expect(buttons).toHaveLength(61);
+    expect([...buttons].every(button => button.value.startsWith('VI 登录'))).toBe(true);
+    translator.stop();
+  });
+
   it('translates valid product cards in a batch even if one card fails validation', async () => {
     root.innerHTML = `
       <div class="card1">沙滩车摩托车四轮</div>

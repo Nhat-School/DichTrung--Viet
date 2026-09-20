@@ -13,20 +13,19 @@ Bản build sẵn nằm trực tiếp trong thư mục `.output` (chứa file `m
 
 Chrome tự quản lý khả năng cung cấp và tải mô hình; tiện ích báo đúng trạng thái thực tế và không tự gửi văn bản ra ngoài nếu chưa được người dùng cho phép.
 
-## Dịch Taobao, 1688 và website tiếng Trung khác
+## Dịch Taobao, 1688 và mọi website tiếng Trung
 
-Taobao và 1688 được cấu hình tự động bật. Khi truy cập một website HTTP/HTTPS tiếng Trung khác:
-
-1. Mở website cần dịch, bấm vào biểu tượng TranslateChina.
-2. Bấm **Cho phép dịch website này** và xác nhận cấp quyền cho đúng tên miền đó.
-3. Website sẽ được ghi nhớ và tự động dịch trong các lần truy cập tiếp theo. Bạn có thể bật/tắt riêng trong popup hoặc tab Thiết lập.
+Mặc định, TranslateChina tự dịch chữ tiếng Trung trên **mọi trang HTTP/HTTPS**, gồm cả nội dung được tải sau, menu, popup đăng nhập và iframe. Không cần bật từng tên miền. Trong tab **Thiết lập**, dùng công tắc **Tự động dịch mọi website tiếng Trung** để tắt/bật toàn bộ tính năng; công tắc của trang hiện tại vẫn cho phép loại trừ một website cụ thể.
 
 **Tính năng dịch trang web:**
 - **Dịch theo lô chịu lỗi (Fault-tolerant batching):** Xử lý văn bản theo từng lô 60 đoạn với cơ chế cách ly lỗi; nếu một tiêu đề có mã sản phẩm đặc biệt chưa xử lý được thì vẫn giữ nguyên văn bản gốc của tiêu đề đó và tiếp tục dịch toàn bộ các sản phẩm còn lại trên trang mà không bị đứng hay ngắt quãng.
 - **Bảo toàn thông số kỹ thuật & quy cách:** Cơ chế `preservesFacts` và `protectTokens` thông minh, tự động nhận diện mã hàng (như `LC135260`, `Em5-pro`, `CQR300`), phân khối động cơ (`200CC`, `49cc`, `phân khối`), thông số điện (`60v`, `5600w`), tỷ lệ `%`, số lượng và URL, không phân biệt hoa/thường hay khoảng trắng do bộ dịch sinh ra.
 - **Dịch thuộc tính trực quan:** Tự động dịch các thuộc tính hiển thị như `placeholder`, `title`, `aria-label` và thẻ ảnh `alt`.
+- **Popup và biểu mẫu đăng nhập:** Dịch nhanh nội dung dialog, placeholder và nhãn của nút `Đăng nhập`/`Gửi`, kể cả trong iframe `about:blank`, `srcdoc` hoặc Shadow DOM mở mà Chrome cho phép extension truy cập.
 - **Rê chuột xem bản gốc:** Di chuột vào bất kỳ đoạn văn bản hoặc ô giá nào đã dịch để xem tooltip đối chiếu văn bản gốc tiếng Trung.
 - **Tự động theo dõi nội dung cuộn:** Bộ theo dõi `MutationObserver` liên tục quét và dịch các sản phẩm mới xuất hiện khi người dùng cuộn trang.
+
+Chrome không cho extension đọc nội dung trong Shadow DOM đóng, iframe bị sandbox hoàn toàn, hoặc chữ đã vẽ trực tiếp vào ảnh/canvas. Với chữ trong ảnh, dùng **Khoanh vùng** hoặc **Chọn ảnh** để OCR rồi dịch.
 
 ## Quy đổi giá CNY sang VNĐ
 

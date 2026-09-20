@@ -3,6 +3,11 @@ import { defineConfig } from 'wxt';
 export default defineConfig({
   outDirTemplate: '',
   modules: ['@wxt-dev/module-react'],
+  vite: () => ({
+    build: {
+      modulePreload: false,
+    },
+  }),
   manifest: {
     name: 'TranslateChina — Trung → Việt',
     description: 'Dịch Trung–Việt trên website bạn chọn, đọc chữ trong ảnh và quy đổi giá Taobao/1688. Không tài khoản hay API key.',
@@ -18,7 +23,6 @@ export default defineConfig({
       'https://api.frankfurter.dev/*',
       'https://translate.googleapis.com/*',
     ],
-    optional_host_permissions: ['http://*/*', 'https://*/*'],
     content_security_policy: {
       extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.frankfurter.dev https://translate.googleapis.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'",
     },

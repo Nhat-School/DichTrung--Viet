@@ -14,8 +14,7 @@ test.beforeAll(async () => {
   fixtureExtension = fs.mkdtempSync(path.join(os.tmpdir(), 'tc-extension-test-'));
   fs.cpSync(extension, fixtureExtension, { recursive: true });
   const manifest = JSON.parse(fs.readFileSync(path.join(fixtureExtension, 'manifest.json'), 'utf8'));
-  expect(manifest.host_permissions).not.toContain('<all_urls>');
-  manifest.host_permissions.push('https://news.example.test/*');
+  expect(manifest.host_permissions).toContain('<all_urls>');
   fs.writeFileSync(path.join(fixtureExtension, 'manifest.json'), JSON.stringify(manifest));
   context = await chromium.launchPersistentContext('', {
     channel: 'chromium', headless: true,
@@ -55,17 +54,11 @@ test('real packaged OCR recovers Chinese labels from the user report', async ({}
   await app.screenshot({ path: 'artifacts/ocr-result.png', fullPage: true });
 });
 
-test('general Chinese page is opt-in and preserves forms and dynamic labels', async () => {
+test('general Chinese pages translate automatically and preserve user form values', async () => {
   const page = await context.newPage();
   await context.route('https://news.example.test/**', route => route.fulfill({ contentType: 'text/html; charset=utf-8', body: '<html lang="zh"><meta charset="utf-8"><body><h1>商品详情</h1><p id="dynamic">现货</p><input value="我的内容"><button id="change">搜索</button><script>document.getElementById("change").onclick=()=>document.getElementById("dynamic").textContent="预售"</script></body></html>' }));
   await page.goto('https://news.example.test/article');
-  expect(await page.locator('[data-tc-root]').count()).toBe(0);
-  await app.evaluate(async () => {
-    const tabs = await chrome.tabs.query({});
-    const target = tabs.find(tab => tab.url?.startsWith('https://news.example.test/'))!;
-    const reply = await chrome.runtime.sendMessage({ type: 'enable-site', tabId: target.id! });
-    if (!reply.ok) throw new Error(reply.error);
-  });
+  await expect(page.locator('[data-tc-root]')).toHaveCount(1);
   await expect(page.locator('h1')).toHaveText('Chi tiết sản phẩm');
   await expect(page.locator('#dynamic')).toHaveText('Hàng có sẵn');
   await page.locator('#change').click();
@@ -93,7 +86,7 @@ test('UI clearly identifies online fallback and independent search/chat drafts',
   await app.getByRole('button', { name: /Nhắn người bán/ }).click();
   const message = app.getByLabel('Nội dung nhắn cho shop (Tiếng Việt)');
   await message.fill('Shop còn hàng không?');
-  await app.getByRole('button', { name: /Tìm hàng/ }).click();
+  await app.getByRole('button', { name: /Tìm kiếm|Tìm hàng/ }).click();
   await expect(search).toHaveValue('áo màu trắng');
   await app.getByRole('button', { name: /Nhắn người bán/ }).click();
   await expect(message).toHaveValue('Shop còn hàng không?');

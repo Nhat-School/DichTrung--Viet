@@ -21,6 +21,7 @@ export function cropBounds(crop: Crop | null | undefined, imageWidth: number, im
 function loadImageElement(dataUrl: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
     const img = new Image();
+    img.crossOrigin = 'anonymous';
     img.onload = () => resolve(img);
     img.onerror = () => reject(new Error('Không thể tải ảnh chụp màn hình. Hãy thử lại.'));
     img.src = dataUrl;

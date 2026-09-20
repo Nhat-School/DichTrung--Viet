@@ -14,6 +14,7 @@ function isPriceNode(node: Text, parent: HTMLElement | null): boolean {
 export class PageTranslator {
   private records = new Map<Text, RecordState>();
   private attrRecords = new Map<Element, Map<string, AttrRecordState>>();
+  private shadowRoots = new Set<ShadowRoot>();
   private rescanRequested = false;
   private observer?: MutationObserver;
   private timer?: ReturnType<typeof setTimeout>;
@@ -39,6 +40,9 @@ export class PageTranslator {
       let changed = false;
       for (const mutation of mutations) {
         const element = mutation.target instanceof Element ? mutation.target : mutation.target.parentElement;
+        if (mutation.type === 'childList') {
+          for (const node of mutation.addedNodes) this.discoverShadowRoots(node);
+        }
         if (element?.closest('[data-tc-owned]')) continue;
         if (mutation.type === 'childList' && [...mutation.addedNodes, ...mutation.removedNodes].length && [...mutation.addedNodes, ...mutation.removedNodes].every(node => node instanceof Element && node.hasAttribute('data-tc-owned'))) continue;
         if (mutation.type === 'characterData') {
@@ -56,14 +60,33 @@ export class PageTranslator {
       }
       if (changed) { this.schedule(); this.onChange(); }
     });
-    this.observer.observe(this.root, {
+    this.observeRoot(this.root);
+    this.discoverShadowRoots(this.root);
+    this.schedule();
+  }
+  private observeRoot(root: Node) {
+    this.observer?.observe(root, {
       childList: true,
       subtree: true,
       characterData: true,
       attributes: true,
       attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'placeholder', 'aria-label', 'alt', 'value'],
     });
-    this.schedule();
+  }
+  private discoverShadowRoots(node: Node) {
+    const candidates: Element[] = [];
+    if (node instanceof Element) candidates.push(node);
+    if (node instanceof DocumentFragment || node instanceof Element) candidates.push(...node.querySelectorAll('*'));
+    for (const candidate of candidates) {
+      const shadow = candidate.shadowRoot;
+      if (!shadow || this.shadowRoots.has(shadow)) continue;
+      this.shadowRoots.add(shadow);
+      this.observeRoot(shadow);
+      this.discoverShadowRoots(shadow);
+    }
+  }
+  private scanRoots(): Array<HTMLElement | ShadowRoot> {
+    return [this.root, ...[...this.shadowRoots].filter(root => root.isConnected)];
   }
   stop() {
     this.enabled = false; this.generation++; this.observer?.disconnect(); clearTimeout(this.timer);
@@ -77,7 +100,7 @@ export class PageTranslator {
         if (record.attr === 'placeholder' && el instanceof HTMLInputElement) el.placeholder = record.original;
       }
     }
-    this.records.clear(); this.attrRecords.clear(); this.translated = 0; this.error = undefined;
+    this.records.clear(); this.attrRecords.clear(); this.shadowRoots.clear(); this.translated = 0; this.error = undefined;
     this.onChange();
   }
   retry() {
@@ -203,26 +226,32 @@ export class PageTranslator {
       const batch: Text[] = [];
 
       // Prioritize active popups, modals, dialogs, and captchas so they translate immediately
-      const modals = this.root.querySelectorAll<HTMLElement>(
-        '[role="dialog"], [class*="dialog" i], [class*="modal" i], [class*="popup" i], [class*="captcha" i], .baxia-dialog, [id*="baxia" i], .nc-container, [id*="nc_" i], .ui-dialog'
-      );
-      for (const modal of modals) {
-        if (!this.visible(modal) || modal.closest('[data-tc-owned]')) continue;
-        const modalWalker = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT, filter);
-        while (batch.length < 60) {
-          const node = modalWalker.nextNode();
-          if (!node) break;
-          batch.push(node as Text);
+      for (const root of this.scanRoots()) {
+        const modals = root.querySelectorAll<HTMLElement>(
+          '[role="dialog"], [class*="dialog" i], [class*="modal" i], [class*="popup" i], [class*="captcha" i], .baxia-dialog, [id*="baxia" i], .nc-container, [id*="nc_" i], .ui-dialog'
+        );
+        for (const modal of modals) {
+          if (!this.visible(modal) || modal.closest('[data-tc-owned]')) continue;
+          const modalWalker = document.createTreeWalker(modal, NodeFilter.SHOW_TEXT, filter);
+          while (batch.length < 60) {
+            const node = modalWalker.nextNode();
+            if (!node) break;
+            if (!batch.includes(node as Text)) batch.push(node as Text);
+          }
+          if (batch.length >= 60) break;
         }
         if (batch.length >= 60) break;
       }
 
       if (batch.length < 60) {
-        const walker = document.createTreeWalker(this.root, NodeFilter.SHOW_TEXT, filter);
-        while (batch.length < 60) {
-          const node = walker.nextNode();
-          if (!node) break;
-          if (!batch.includes(node as Text)) batch.push(node as Text);
+        for (const root of this.scanRoots()) {
+          const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, filter);
+          while (batch.length < 60) {
+            const node = walker.nextNode();
+            if (!node) break;
+            if (!batch.includes(node as Text)) batch.push(node as Text);
+          }
+          if (batch.length >= 60) break;
         }
       }
 
@@ -231,11 +260,9 @@ export class PageTranslator {
       }
 
       // Translate visible metadata (including input buttons) without touching user inputs.
-      const attrElements = this.root.querySelectorAll<HTMLElement>(
-        '[placeholder], [title], [aria-label], img[alt], input[type="button"][value], input[type="submit"][value], input[type="reset"][value]'
-      );
       const pendingAttrs: { el: HTMLElement; attr: string; val: string; record: AttrRecordState }[] = [];
-      for (const el of attrElements) {
+      const attrSelector = '[placeholder], [title], [aria-label], img[alt], input[type="image"][alt], input[type="button"][value], input[type="submit"][value], input[type="reset"][value]';
+      for (const root of this.scanRoots()) for (const el of root.querySelectorAll<HTMLElement>(attrSelector)) {
         if (!this.enabled || this.generation !== generation || pendingAttrs.length >= 60) break;
         if (!el.isConnected || !this.visible(el) || el.closest('[data-tc-owned],[translate="no"],[contenteditable]:not([contenteditable="false"])') || (el.parentElement && isExcluded(el.parentElement))) continue;
         const isInputButton = el instanceof HTMLInputElement && ['button', 'submit', 'reset'].includes((el.type || '').toLowerCase());
@@ -285,7 +312,9 @@ export class PageTranslator {
         this.error.includes('Thiết lập') ||
         this.error.includes('OFFSCREEN')
       ));
-      if (batch.length > 0 && !isFatal) this.schedule();
+      // Continue if either text or visible attributes filled this batch. This is
+      // important for dialogs containing many input buttons but little body text.
+      if ((batch.length > 0 || pendingAttrs.length > 0) && !isFatal) this.schedule();
     } finally {
       this.running = false;
       if (this.rescanRequested) this.schedule();

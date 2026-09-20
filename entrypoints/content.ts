@@ -9,6 +9,9 @@ export default defineContentScript({
   matches: ['*://*/*'],
   runAt: 'document_idle',
   allFrames: true,
+  // Login providers frequently build a dialog in an about:blank or srcdoc frame.
+  // Chrome permits this only when the parent page is covered by our host access.
+  matchAboutBlank: true,
   main(ctx) {
     let currentUrl = location.href;
     if (window !== window.top && (currentUrl === 'about:blank' || !currentUrl.startsWith('http'))) {
@@ -55,16 +58,30 @@ export default defineContentScript({
       node.onclick = () => node.remove(); shadow.append(node); setTimeout(() => node.remove(), 12000);
     }
 
+    const captchaAttempts = new WeakMap<Element, number>();
     async function scanCaptchaPrompt() {
-      const candidates = document.querySelectorAll<HTMLElement>(
-        '[class*="captcha" i] img, [id*="captcha" i] img, .baxia-dialog img, [id*="baxia" i] img, .nc-container img, [id*="nc_" i] img, .ui-dialog img, [class*="dialog" i] img, [class*="modal" i] img, [class*="challenge" i] img, [class*="verify" i] img, [class*="turing" i] img, img[src*="captcha" i], img[src*="challenge" i], img[src*="getimage" i], [class*="captcha" i] canvas, [id*="captcha" i] canvas, .baxia-dialog canvas, [class*="dialog" i] canvas, [class*="modal" i] canvas, [class*="captcha" i] [style*="background-image"], [id*="captcha" i] [style*="background-image"], .baxia-dialog [style*="background-image"]'
-      );
+      const roots: (Document | ShadowRoot)[] = [document];
+      const allElements = document.querySelectorAll('*');
+      for (const node of allElements) {
+        if (node.shadowRoot) roots.push(node.shadowRoot);
+      }
+      const selector = '[class*="captcha" i] img, [id*="captcha" i] img, .baxia-dialog img, [id*="baxia" i] img, .nc-container img, [id*="nc_" i] img, .ui-dialog img, [class*="dialog" i] img, [class*="modal" i] img, [class*="challenge" i] img, [class*="verify" i] img, [class*="turing" i] img, img[src*="captcha" i], img[src*="challenge" i], img[src*="getimage" i], [class*="captcha" i] canvas, [id*="captcha" i] canvas, .baxia-dialog canvas, [class*="dialog" i] canvas, [class*="modal" i] canvas, [class*="captcha" i] [style*="background-image"], [id*="captcha" i] [style*="background-image"], .baxia-dialog [style*="background-image"]';
+      const candidates: HTMLElement[] = [];
+      for (const root of roots) {
+        candidates.push(...root.querySelectorAll<HTMLElement>(selector));
+      }
       for (const el of candidates) {
         if (processedCaptchaImages.has(el) || el.closest('[data-tc-owned]')) continue;
         const rect = el.getBoundingClientRect();
-        const isBanner = rect.width >= 50 && rect.width <= 480 && rect.height >= 12 && rect.height <= 130 && (rect.width / (rect.height || 1) >= 1.2);
+        const isBanner = rect.width >= 40 && rect.width <= 550 && rect.height >= 10 && rect.height <= 150 && (rect.width / (rect.height || 1) >= 1.1);
         if (!isBanner) continue;
-        processedCaptchaImages.add(el);
+        if (el instanceof HTMLImageElement && !el.complete && el.naturalWidth === 0) continue;
+        const attempts = captchaAttempts.get(el) || 0;
+        if (attempts >= 3) {
+          processedCaptchaImages.add(el);
+          continue;
+        }
+        captchaAttempts.set(el, attempts + 1);
         try {
           let dataUrl = '';
           if (el instanceof HTMLImageElement && el.src) {
@@ -92,6 +109,7 @@ export default defineContentScript({
           if (dataUrl) {
             const ocrRes = await request<{ text: string }>({ type: 'ocr-image', image: dataUrl }).catch(() => null);
             if (ocrRes?.text?.trim()) {
+              processedCaptchaImages.add(el);
               const zh = ocrRes.text.trim().replace(/\s+/g, ' ');
               const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
               const parent = el.parentElement;
