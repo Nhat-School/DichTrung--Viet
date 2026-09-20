@@ -24,7 +24,7 @@ export default defineConfig({
       'https://translate.googleapis.com/*',
     ],
     content_security_policy: {
-      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' https://api.frankfurter.dev https://translate.googleapis.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'",
+      extension_pages: "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self' blob:; connect-src 'self' data: blob: https://api.frankfurter.dev https://translate.googleapis.com; img-src 'self' data: blob:; style-src 'self' 'unsafe-inline'",
     },
     action: { default_title: 'TranslateChina' },
     side_panel: { default_path: 'sidepanel.html' },

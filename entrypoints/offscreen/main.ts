@@ -1,3 +1,17 @@
+// Silence harmless Tesseract engine warnings in extension logs
+(() => {
+  const origWarn = console.warn;
+  const origError = console.error;
+  const isNoisy = (args: any[]) => args.some(m => typeof m === 'string' && (
+    m.includes('Parameter not found') ||
+    m.includes('diacritics') ||
+    m.includes('cross-world') ||
+    m.includes('preloaded using link preload')
+  ));
+  console.warn = (...args: any[]) => { if (isNoisy(args)) return; return origWarn.apply(console, args); };
+  console.error = (...args: any[]) => { if (isNoisy(args)) return; return origError.apply(console, args); };
+})();
+
 import { TranslationEngine } from '../../lib/translator';
 import { OcrEngine } from '../../lib/ocr';
 import { getSettings } from '../../lib/storage';

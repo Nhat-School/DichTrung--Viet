@@ -156,8 +156,9 @@ function copyTesseractAssets() {
   const srcWorker = path.join(ROOT, 'node_modules', 'tesseract.js', 'dist', 'worker.min.js');
   const dstWorker = path.join(tesseractDir, 'worker.min.js');
   if (fs.existsSync(srcWorker)) {
-    fs.copyFileSync(srcWorker, dstWorker);
-    console.log(`✔ Copied Tesseract worker to public/vendor/tesseract/worker.min.js`);
+    const banner = `(()=>{const _w=console.warn,_e=console.error,_f=a=>a.some(m=>typeof m==="string"&&(m.includes("Parameter not found")||m.includes("diacritics")||m.includes("cross-world")||m.includes("preloaded using link preload")));console.warn=function(...a){if(_f(a))return;_w.apply(console,a)};console.error=function(...a){if(_f(a))return;_e.apply(console,a)}})();\n`;
+    fs.writeFileSync(dstWorker, banner + fs.readFileSync(srcWorker, 'utf8'));
+    console.log(`✔ Copied Tesseract worker to public/vendor/tesseract/worker.min.js with warning filter`);
   } else {
     console.warn(`⚠ Warning: ${srcWorker} not found`);
   }
