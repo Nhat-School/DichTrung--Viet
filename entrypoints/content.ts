@@ -50,7 +50,27 @@ export default defineContentScript({
       renderedText: string;
     }
     const priceRecords = new Map<Element, PriceRecord>();
-    const processedCaptchaImages = new WeakSet<Element>();
+    interface CaptchaPromptState {
+      sig: string;
+      translating: boolean;
+      text?: string;
+      dismissed?: boolean;
+    }
+    const captchaPromptStates = new WeakMap<Element, CaptchaPromptState>();
+    const observedCaptchaImgs = new WeakSet<Element>();
+    let captchaPollInterval: ReturnType<typeof setInterval> | undefined;
+
+    function getElementSignature(el: HTMLElement): string {
+      if (el instanceof HTMLImageElement) {
+        const src = el.currentSrc || el.src || '';
+        return src.startsWith('data:') ? `data:${src.length}:${src.slice(0, 80)}` : `img:${src}`;
+      }
+      if (el instanceof HTMLCanvasElement) {
+        return `canvas:${el.width}x${el.height}:${el.toDataURL ? el.toDataURL('image/png').slice(0, 60) : ''}`;
+      }
+      const bg = window.getComputedStyle(el).backgroundImage;
+      return `bg:${bg || ''}`;
+    }
 
     function toast(text: string) {
       shadow.querySelector('.toast')?.remove();
@@ -58,7 +78,6 @@ export default defineContentScript({
       node.onclick = () => node.remove(); shadow.append(node); setTimeout(() => node.remove(), 12000);
     }
 
-    const captchaAttempts = new WeakMap<Element, number>();
     async function scanCaptchaPrompt() {
       const roots: (Document | ShadowRoot)[] = [document];
       const allElements = document.querySelectorAll('*');
@@ -70,18 +89,91 @@ export default defineContentScript({
       for (const root of roots) {
         candidates.push(...root.querySelectorAll<HTMLElement>(selector));
       }
+
+      // Check if any captcha dialog is present to maintain periodic polling while open
+      const hasActiveCaptcha = candidates.length > 0 || !!document.querySelector('.baxia-dialog, [class*="captcha" i], [id*="captcha" i], .nc-container, [id*="nc_" i], .ui-dialog');
+      if (hasActiveCaptcha && !captchaPollInterval) {
+        captchaPollInterval = setInterval(() => {
+          const stillActive = !!document.querySelector('.baxia-dialog, [class*="captcha" i], [id*="captcha" i], .nc-container, [id*="nc_" i], .ui-dialog');
+          if (!stillActive) {
+            clearInterval(captchaPollInterval);
+            captchaPollInterval = undefined;
+            document.querySelectorAll('.tc-captcha-badge').forEach(b => b.remove());
+            return;
+          }
+          void scanCaptchaPrompt();
+        }, 600);
+      }
+
       for (const el of candidates) {
-        if (processedCaptchaImages.has(el) || el.closest('[data-tc-owned]')) continue;
+        if (el.closest('[data-tc-owned]')) continue;
         const rect = el.getBoundingClientRect();
         const isBanner = rect.width >= 40 && rect.width <= 550 && rect.height >= 10 && rect.height <= 150 && (rect.width / (rect.height || 1) >= 1.1);
         if (!isBanner) continue;
         if (el instanceof HTMLImageElement && !el.complete && el.naturalWidth === 0) continue;
-        const attempts = captchaAttempts.get(el) || 0;
-        if (attempts >= 3) {
-          processedCaptchaImages.add(el);
+
+        if (el instanceof HTMLImageElement && !observedCaptchaImgs.has(el)) {
+          observedCaptchaImgs.add(el);
+          el.addEventListener('load', () => scheduleCaptcha());
+        }
+
+        const sig = getElementSignature(el);
+        if (!sig || sig === 'img:' || sig === 'bg:none' || sig === 'bg:') continue;
+
+        const parent = el.parentElement;
+        if (!parent) continue;
+
+        const state = captchaPromptStates.get(el);
+        const existingBadge = parent.querySelector<HTMLElement>('.tc-captcha-badge');
+
+        // If the prompt image changed on this element, immediately remove the old stale badge!
+        if (state && state.sig !== sig) {
+          if (existingBadge) existingBadge.remove();
+          state.sig = sig;
+          state.translating = false;
+          state.text = undefined;
+          state.dismissed = false;
+        }
+
+        // If user already dismissed badge for this exact challenge
+        if (state?.dismissed && state.sig === sig) continue;
+
+        // If this exact challenge was already translated and badge is visible with matching signature
+        if (state?.text && state.sig === sig && existingBadge && existingBadge.dataset.tcSig === sig) {
           continue;
         }
-        captchaAttempts.set(el, attempts + 1);
+
+        // If currently OCR-ing this exact signature, wait for it
+        if (state?.translating && state.sig === sig) continue;
+
+        // Set state to translating
+        captchaPromptStates.set(el, { sig, translating: true });
+
+        // Show a temporary indicator so the user knows a new prompt is being analyzed
+        if (window.getComputedStyle(parent).position === 'static') {
+          parent.style.position = 'relative';
+        }
+        let badge = existingBadge;
+        if (!badge) {
+          badge = document.createElement('div');
+          badge.className = 'tc-captcha-badge';
+          badge.dataset.tcOwned = '';
+          badge.style.cssText = 'position:absolute;top:0;left:0;right:0;background:#102a26fa;backdrop-filter:blur(6px);color:#2be6ab;font:bold 12px/1.25 system-ui,sans-serif;padding:6px 10px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid #23815e;z-index:2147483647;cursor:pointer;pointer-events:auto;';
+          parent.appendChild(badge);
+        }
+        badge.dataset.tcSig = sig;
+        badge.title = 'Bấm để ẩn và xem ảnh gốc';
+        badge.innerHTML = `<div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="flex-shrink:0;">🏷️</span> <span style="color:#a7f3d0;font-style:italic;">Đang đọc yêu cầu mới...</span></div><button class="tc-badge-close" style="background:none;border:none;color:#9bc9bb;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;" aria-label="Đóng">×</button>`;
+        const closeBtn = badge.querySelector<HTMLButtonElement>('.tc-badge-close');
+        if (closeBtn) {
+          closeBtn.onclick = (e) => {
+            e.stopPropagation();
+            badge?.remove();
+            const cur = captchaPromptStates.get(el);
+            if (cur) cur.dismissed = true;
+          };
+        }
+
         try {
           let dataUrl = '';
           if (el instanceof HTMLImageElement && el.src) {
@@ -106,35 +198,52 @@ export default defineContentScript({
             const match = bg && /url\(["']?([^"']+)["']?\)/i.exec(bg);
             if (match) dataUrl = match[1];
           }
+
           if (dataUrl) {
             const ocrRes = await request<{ text: string }>({ type: 'ocr-image', image: dataUrl }).catch(() => null);
+            // Verify element is still in DOM and hasn't changed signature while OCR was processing
+            if (!el.isConnected || getElementSignature(el) !== sig) {
+              badge.remove();
+              return;
+            }
             if (ocrRes?.text?.trim()) {
-              processedCaptchaImages.add(el);
               const zh = ocrRes.text.trim().replace(/\s+/g, ' ');
               const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
-              const parent = el.parentElement;
-              if (parent) {
-                if (window.getComputedStyle(parent).position === 'static') {
-                  parent.style.position = 'relative';
-                }
-                const existing = parent.querySelector<HTMLElement>('.tc-captcha-badge');
-                const badge = existing || document.createElement('div');
-                badge.className = 'tc-captcha-badge';
-                badge.dataset.tcOwned = '';
-                badge.style.cssText = 'position:absolute;top:0;left:0;right:0;background:#102a26fa;backdrop-filter:blur(6px);color:#2be6ab;font:bold 12px/1.25 system-ui,sans-serif;padding:6px 10px;border-radius:6px;display:flex;align-items:center;justify-content:space-between;gap:8px;box-shadow:0 4px 16px rgba(0,0,0,0.4);border:1px solid #23815e;z-index:2147483647;cursor:pointer;pointer-events:auto;';
-                badge.title = 'Bấm để ẩn và xem ảnh gốc';
-                badge.innerHTML = `<div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="flex-shrink:0;">🏷️ Yêu cầu:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span></div><button class="tc-badge-close" style="background:none;border:none;color:#9bc9bb;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;" aria-label="Đóng">×</button>`;
-                badge.onclick = (e) => {
-                  e.stopPropagation();
-                  badge.remove();
-                };
-                if (!existing) {
-                  parent.appendChild(badge);
-                }
+              if (!el.isConnected || getElementSignature(el) !== sig) {
+                badge.remove();
+                return;
               }
+              captchaPromptStates.set(el, { sig, translating: false, text: vi });
+              badge.title = 'Bấm để ẩn và xem ảnh gốc';
+              badge.innerHTML = `<div style="display:flex;align-items:center;gap:6px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"><span style="flex-shrink:0;">🏷️ Yêu cầu:</span> <span style="color:#ffffff;text-decoration:underline;">${vi}</span></div><button class="tc-badge-close" style="background:none;border:none;color:#9bc9bb;font-size:16px;line-height:1;cursor:pointer;padding:0 4px;" aria-label="Đóng">×</button>`;
+              const finalCloseBtn = badge.querySelector<HTMLButtonElement>('.tc-badge-close');
+              if (finalCloseBtn) {
+                finalCloseBtn.onclick = (e) => {
+                  e.stopPropagation();
+                  badge?.remove();
+                  const cur = captchaPromptStates.get(el);
+                  if (cur) cur.dismissed = true;
+                };
+              }
+              badge.onclick = (e) => {
+                e.stopPropagation();
+                badge?.remove();
+                const cur = captchaPromptStates.get(el);
+                if (cur) cur.dismissed = true;
+              };
+            } else {
+              // Could not extract text from this image
+              captchaPromptStates.set(el, { sig, translating: false, text: '' });
+              badge.remove();
             }
+          } else {
+            captchaPromptStates.set(el, { sig, translating: false });
+            badge.remove();
           }
-        } catch {}
+        } catch {
+          captchaPromptStates.set(el, { sig, translating: false });
+          badge.remove();
+        }
       }
     }
 
@@ -437,6 +546,7 @@ export default defineContentScript({
     ctx.onInvalidated(() => {
       captureCleanup?.();
       clearTimeout(captchaTimer);
+      if (captchaPollInterval) clearInterval(captchaPollInterval);
       clearTimeout(hoverTimer);
       clearTimeout(priceTimer);
       restorePrices();

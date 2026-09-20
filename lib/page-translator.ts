@@ -70,7 +70,7 @@ export class PageTranslator {
       subtree: true,
       characterData: true,
       attributes: true,
-      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'placeholder', 'aria-label', 'alt', 'value'],
+      attributeFilter: ['class', 'style', 'hidden', 'aria-hidden', 'title', 'placeholder', 'aria-label', 'alt', 'value', 'src'],
     });
   }
   private discoverShadowRoots(node: Node) {

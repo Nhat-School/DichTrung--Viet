@@ -64,6 +64,10 @@ export const GLOSSARY: Record<string, string> = {
   '只有2个灭火器': 'Chỉ có 2 bình chữa cháy',
   '只有3个灭火器': 'Chỉ có 3 bình chữa cháy',
   '正好4个方形开关': 'Đúng 4 công tắc vuông',
+  '有六个人': 'Có sáu người',
+  '有6个人': 'Có 6 người',
+  '六个人': 'Sáu người',
+  '6个人': '6 người',
   // Login & Authentication
   '短信登录': 'Đăng nhập bằng SMS',
   '密码登录': 'Đăng nhập bằng mật khẩu',
