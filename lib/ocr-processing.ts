@@ -27,6 +27,39 @@ function otsuThreshold(pixels: Uint8ClampedArray): number {
   return threshold;
 }
 
+function boxBlurGray(pixels: Uint8ClampedArray, width: number, height: number, radius = 2): Float32Array {
+  const size = width * height;
+  const gray = new Float32Array(size);
+  for (let i = 0; i < size; i++) {
+    const idx = i * 4;
+    gray[i] = 0.299 * pixels[idx] + 0.587 * pixels[idx + 1] + 0.114 * pixels[idx + 2];
+  }
+  const temp = new Float32Array(size);
+  for (let y = 0; y < height; y++) {
+    const rowOffset = y * width;
+    for (let x = 0; x < width; x++) {
+      let sum = 0, count = 0;
+      for (let dx = -radius; dx <= radius; dx++) {
+        const nx = x + dx;
+        if (nx >= 0 && nx < width) { sum += gray[rowOffset + nx]; count++; }
+      }
+      temp[rowOffset + x] = sum / count;
+    }
+  }
+  const result = new Float32Array(size);
+  for (let x = 0; x < width; x++) {
+    for (let y = 0; y < height; y++) {
+      let sum = 0, count = 0;
+      for (let dy = -radius; dy <= radius; dy++) {
+        const ny = y + dy;
+        if (ny >= 0 && ny < height) { sum += temp[ny * width + x]; count++; }
+      }
+      result[y * width + x] = sum / count;
+    }
+  }
+  return result;
+}
+
 /** Keep source geometry identical across passes so alternatives can be compared spatially. */
 export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement[] {
   const scale = Math.min(3, 2400 / Math.max(source.width, source.height), Math.sqrt(4_000_000 / (source.width * source.height)));
@@ -37,6 +70,35 @@ export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement
   ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, normal.width, normal.height);
   ctx.imageSmoothingEnabled = true; ctx.imageSmoothingQuality = 'high';
   ctx.drawImage(source, 0, 0, normal.width, normal.height);
+
+  // Denoised pass: eliminates isolated speckle noise dots from CAPTCHA prompt textures
+  const denoised = document.createElement('canvas');
+  denoised.width = normal.width; denoised.height = normal.height;
+  const denoisedCtx = denoised.getContext('2d')!;
+  const denoisedPixels = ctx.getImageData(0, 0, normal.width, normal.height);
+  const blurred = boxBlurGray(denoisedPixels.data, normal.width, normal.height, 2);
+  const dHist = new Int32Array(256);
+  for (let i = 0; i < blurred.length; i++) dHist[Math.max(0, Math.min(255, Math.round(blurred[i])))]++;
+  let dSum = 0;
+  for (let i = 0; i < 256; i++) dSum += i * dHist[i];
+  let dSumB = 0, dWb = 0, dMaxVar = 0, dThresh = 128;
+  for (let t = 0; t < 256; t++) {
+    dWb += dHist[t];
+    if (dWb === 0) continue;
+    const dWf = blurred.length - dWb;
+    if (dWf === 0) break;
+    dSumB += t * dHist[t];
+    const mB = dSumB / dWb, mF = (dSum - dSumB) / dWf;
+    const v = dWb * dWf * (mB - mF) * (mB - mF);
+    if (v > dMaxVar) { dMaxVar = v; dThresh = t; }
+  }
+  for (let i = 0; i < blurred.length; i++) {
+    const val = blurred[i] < dThresh - 4 ? 0 : 255;
+    const idx = i * 4;
+    denoisedPixels.data[idx] = denoisedPixels.data[idx + 1] = denoisedPixels.data[idx + 2] = val;
+    denoisedPixels.data[idx + 3] = 255;
+  }
+  denoisedCtx.putImageData(denoisedPixels, 0, 0);
 
   // High-contrast binarization with Otsu's thresholding to isolate characters from noisy textures.
   const binarized = document.createElement('canvas');
@@ -64,7 +126,7 @@ export function prepareOcrCanvases(source: HTMLCanvasElement): HTMLCanvasElement
     pixels.data[i + 3] = 255;
   }
   invertedContext.putImageData(pixels, 0, 0);
-  return [normal, binarized, inverted];
+  return [denoised, normal, binarized, inverted];
 }
 
 export function cleanOcrText(value: string): string {

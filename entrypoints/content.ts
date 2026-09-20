@@ -3,6 +3,7 @@ import { PageTranslator } from '../lib/page-translator';
 import { findPriceElements } from '../lib/price-elements';
 import { formatPrice, parsePrices, type Price } from '../lib/prices';
 import { request } from '../lib/messages';
+import { resolveCaptchaPrompt } from '../lib/captcha-matcher';
 import { isCommerceSite, isSiteEnabled, siteFor, type Crop, type Rate, type Settings } from '../lib/types';
 
 export default defineContentScript({
@@ -208,7 +209,13 @@ export default defineContentScript({
             }
             if (ocrRes?.text?.trim()) {
               const zh = ocrRes.text.trim().replace(/\s+/g, ' ');
-              const vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
+              const resolved = resolveCaptchaPrompt(zh);
+              let vi: string;
+              if (resolved) {
+                vi = resolved.vi;
+              } else {
+                vi = await request<string>({ type: 'translate', text: zh, direction: 'zh-vi' }).catch(() => zh);
+              }
               if (!el.isConnected || getElementSignature(el) !== sig) {
                 badge.remove();
                 return;
